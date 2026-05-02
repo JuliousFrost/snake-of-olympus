@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getArenaScale, getArenaBounds } from '../src/game/systems/arenaSystem';
+import { getArenaScale, getArenaBounds, getContinuousArenaScale } from '../src/game/systems/arenaSystem';
 import { getSegmentCount, getHeadRadius, applyDamage, applyHealing } from '../src/game/entities/snakeMath';
 import { scoreSnake, sortLeaderboard } from '../src/game/systems/scoringSystem';
 import { safeJsonRead, safeJsonWrite, getSafeStorage } from '../src/game/core/persistence';
@@ -21,6 +21,15 @@ describe('Snake of Olympus core rules', () => {
     expect(getArenaScale(6, 10)).toBeCloseTo(0.58 + 0.42 * (5 / 9));
   });
 
+  it('continues shrinking arena over time even when alive count does not change', () => {
+    const early = getContinuousArenaScale({ aliveCount: 3, totalSnakes: 10, elapsedSeconds: 20 });
+    const late = getContinuousArenaScale({ aliveCount: 3, totalSnakes: 10, elapsedSeconds: 140 });
+
+    expect(late).toBeLessThan(early);
+    expect(late).toBeLessThanOrEqual(0.5);
+    expect(getContinuousArenaScale({ aliveCount: 1, totalSnakes: 10, elapsedSeconds: 999 })).toBeCloseTo(0.34);
+  });
+
   it('centers arena bounds inside world dimensions', () => {
     const bounds = getArenaBounds(0.58);
     expect(bounds.width).toBeCloseTo(1508);
@@ -37,10 +46,10 @@ describe('Snake of Olympus core rules', () => {
 
   it('applies healing, damage, death, and shield mitigation safely', () => {
     expect(applyHealing(57, 5)).toBe(58);
-    expect(applyDamage(10, 2, false)).toEqual({ hp: 8, killed: false, damage: 2 });
-    expect(applyDamage(1, 2, false)).toEqual({ hp: 0, killed: true, damage: 2 });
-    expect(applyDamage(10, 1, true).damage).toBeCloseTo(0.55);
-    expect(applyDamage(10, 0.1, true).damage).toBeCloseTo(0.2);
+    expect(applyDamage(10, 2, false)).toEqual({ hp: 8, killed: false, damage: 2, blocked: false });
+    expect(applyDamage(1, 2, false)).toEqual({ hp: 0, killed: true, damage: 2, blocked: false });
+    expect(applyDamage(10, 9, true)).toEqual({ hp: 10, killed: false, damage: 0, blocked: true });
+    expect(applyDamage(1, 99, true)).toEqual({ hp: 1, killed: false, damage: 0, blocked: true });
   });
 
   it('scores and sorts leaderboard exactly by alive, kills, hp, then score', () => {

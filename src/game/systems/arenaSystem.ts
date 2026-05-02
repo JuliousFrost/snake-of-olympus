@@ -1,4 +1,4 @@
-import { WORLD } from '../config/balance';
+import { BALANCE, WORLD } from '../config/balance';
 import type { Rect } from '../core/types';
 
 export function getArenaScale(aliveCount: number, totalSnakes: number): number {
@@ -8,8 +8,25 @@ export function getArenaScale(aliveCount: number, totalSnakes: number): number {
   return min + (1 - min) * ((alive - 1) / (totalSnakes - 1));
 }
 
+export function getContinuousArenaScale({
+  aliveCount,
+  totalSnakes,
+  elapsedSeconds,
+}: {
+  aliveCount: number;
+  totalSnakes: number;
+  elapsedSeconds: number;
+}): number {
+  const aliveDrivenScale = getArenaScale(aliveCount, totalSnakes);
+  const timeProgress = Math.max(0, Math.min(1, (elapsedSeconds - BALANCE.arenaTimeShrinkStart) / BALANCE.arenaTimeShrinkDuration));
+  const lowPlayerPressure = aliveCount <= 3 ? BALANCE.arenaLowPlayerExtraShrink : aliveCount <= 5 ? BALANCE.arenaLowPlayerExtraShrink * 0.55 : 0;
+  const timeDrivenScale = 1 - timeProgress * (1 - WORLD.arenaFinalMinScale);
+  const pressureScale = aliveDrivenScale - lowPlayerPressure * timeProgress;
+  return Math.max(WORLD.arenaFinalMinScale, Math.min(pressureScale, timeDrivenScale));
+}
+
 export function getArenaBounds(scale: number): Rect {
-  const safeScale = Math.max(WORLD.arenaMinScale, Math.min(1, scale));
+  const safeScale = Math.max(WORLD.arenaFinalMinScale, Math.min(1, scale));
   const width = WORLD.width * safeScale;
   const height = WORLD.height * safeScale;
   const left = (WORLD.width - width) / 2;

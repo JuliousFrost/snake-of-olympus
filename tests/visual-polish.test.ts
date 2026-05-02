@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createDamageIndicator, updateDamageIndicators, getSnakeSegmentStyle, getOlympusStar } from '../src/game/systems/visualSystem';
+import { createDamageIndicator, updateDamageIndicators, getSnakeSegmentStyle, getOlympusStar, getPickupIcon } from '../src/game/systems/visualSystem';
 
 describe('visual polish systems', () => {
   it('creates readable damage indicators that float up and fade out', () => {
@@ -36,5 +36,13 @@ describe('visual polish systems', () => {
     expect(getOlympusStar(0).x).toBeGreaterThanOrEqual(0);
     expect(getOlympusStar(0).x).toBeLessThanOrEqual(1);
     expect(getOlympusStar(12).alpha).toBeGreaterThan(0);
+  });
+
+  it('describes pickup icons clearly by gameplay effect', () => {
+    expect(getPickupIcon('upgrade', 'shield')).toMatchObject({ label: 'SHIELD', color: 0x8be9fd, symbol: 'shield' });
+    expect(getPickupIcon('upgrade', 'triple')).toMatchObject({ label: 'TRIPLE', symbol: 'triple-shot' });
+    expect(getPickupIcon('upgrade', 'speed')).toMatchObject({ label: 'SPEED', symbol: 'bolt' });
+    expect(getPickupIcon('fruit')).toMatchObject({ label: 'HP', symbol: 'heart' });
+    expect(getPickupIcon('mine')).toMatchObject({ label: 'DANGER', symbol: 'warning' });
   });
 });

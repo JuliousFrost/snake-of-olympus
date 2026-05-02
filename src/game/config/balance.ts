@@ -2,9 +2,13 @@ export const WORLD = {
   width: 2600,
   height: 1500,
   arenaMinScale: 0.58,
+  arenaFinalMinScale: 0.34,
 } as const;
 
 export const BALANCE = {
+  arenaTimeShrinkStart: 20,
+  arenaTimeShrinkDuration: 150,
+  arenaLowPlayerExtraShrink: 0.12,
   snakeCount: 10,
   startHp: 34,
   minAiHp: 30,

@@ -15,8 +15,8 @@ export function applyHealing(hp: number, amount: number): number {
 }
 
 export function applyDamage(hp: number, amount: number, shielded: boolean) {
-  const mitigated = shielded ? amount * (1 - BALANCE.shieldDamageReduction) : amount;
-  const damage = Math.max(0.2, mitigated);
+  if (shielded && amount > 0) return { hp, killed: false, damage: 0, blocked: true };
+  const damage = Math.max(0.2, amount);
   const nextHp = Math.max(0, hp - damage);
-  return { hp: nextHp, killed: hp > 0 && nextHp <= 0, damage };
+  return { hp: nextHp, killed: hp > 0 && nextHp <= 0, damage, blocked: false };
 }

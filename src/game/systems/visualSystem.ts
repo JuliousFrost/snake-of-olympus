@@ -105,6 +105,20 @@ export function getSnakeSegmentStyle(input: SnakeSegmentStyleInput): SnakeSegmen
   };
 }
 
+export type PickupIcon = {
+  label: string;
+  symbol: 'heart' | 'bolt' | 'triple-shot' | 'shield' | 'warning';
+  color: number;
+};
+
+export function getPickupIcon(kind: 'fruit' | 'upgrade' | 'mine', buff?: 'speed' | 'triple' | 'shield'): PickupIcon {
+  if (kind === 'mine') return { label: 'DANGER', symbol: 'warning', color: 0xff3157 };
+  if (kind === 'fruit') return { label: 'HP', symbol: 'heart', color: 0x50fa7b };
+  if (buff === 'shield') return { label: 'SHIELD', symbol: 'shield', color: 0x8be9fd };
+  if (buff === 'triple') return { label: 'TRIPLE', symbol: 'triple-shot', color: 0xffd166 };
+  return { label: 'SPEED', symbol: 'bolt', color: 0xbdff4d };
+}
+
 function fract(value: number) {
   return value - Math.floor(value);
 }

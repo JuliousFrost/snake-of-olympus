@@ -4,7 +4,7 @@ import { SNAKE_ROSTER } from '../data/snakeRoster';
 import type { BuffKind, PickupKind, SnakeRuntime } from '../core/types';
 import { Rng } from '../core/rng';
 import { angleTo, distance, distanceSq, turnToward, wrapAngle } from '../core/math';
-import { getArenaBounds, getArenaScale, clampToArena } from '../systems/arenaSystem';
+import { getArenaBounds, getContinuousArenaScale, clampToArena } from '../systems/arenaSystem';
 import { applyDamage, applyHealing, getHeadRadius, getSegmentCount } from '../entities/snakeMath';
 import { scoreSnake, sortLeaderboard } from '../systems/scoringSystem';
 import { safeJsonRead, safeJsonWrite, getSafeStorage } from '../core/persistence';
@@ -14,6 +14,7 @@ import { createAudioEventQueue, type AudioEventName } from '../systems/audioSyst
 import {
   createDamageIndicator,
   getOlympusStar,
+  getPickupIcon,
   getSnakeSegmentStyle,
   updateDamageIndicators,
   type DamageIndicator,
@@ -41,6 +42,8 @@ export class MatchScene extends Phaser.Scene {
   private feed: Feed[] = [];
   private graphics!: Phaser.GameObjects.Graphics;
   private hud!: Phaser.GameObjects.Text;
+  private leaderboardText!: Phaser.GameObjects.Text;
+  private feedText!: Phaser.GameObjects.Text;
   private overlay!: Phaser.GameObjects.Text;
   private title!: Phaser.GameObjects.Text;
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
@@ -67,6 +70,8 @@ export class MatchScene extends Phaser.Scene {
     this.cameras.main.setBounds(0, 0, WORLD.width, WORLD.height);
     this.graphics = this.add.graphics();
     this.hud = this.add.text(16, 12, '', { fontFamily: 'monospace', fontSize: '15px', color: '#dff7ff', lineSpacing: 4 }).setScrollFactor(0).setDepth(20);
+    this.leaderboardText = this.add.text(0, 0, '', { fontFamily: 'monospace', fontSize: '14px', color: '#eefaff', lineSpacing: 6 }).setScrollFactor(0).setDepth(22);
+    this.feedText = this.add.text(16, 0, '', { fontFamily: 'monospace', fontSize: '13px', color: '#cde8ff', lineSpacing: 5 }).setScrollFactor(0).setDepth(22);
     this.overlay = this.add.text(0, 0, '', { fontFamily: 'Arial Black, Arial', fontSize: '28px', color: '#ffffff', align: 'center', stroke: '#06101f', strokeThickness: 8 }).setOrigin(0.5).setScrollFactor(0).setDepth(30);
     this.title = this.add.text(0, 0, '', { fontFamily: 'Arial Black, Arial', fontSize: '42px', color: '#ffd166', align: 'center', stroke: '#06101f', strokeThickness: 10 }).setOrigin(0.5).setScrollFactor(0).setDepth(31);
     const keyboard = this.input.keyboard!;
@@ -133,7 +138,7 @@ export class MatchScene extends Phaser.Scene {
 
   private step(dt: number) {
     const alive = this.snakes.filter((s) => s.alive);
-    this.arenaScale += (getArenaScale(alive.length, BALANCE.snakeCount) - this.arenaScale) * Math.min(1, dt * 1.8);
+    this.arenaScale += (getContinuousArenaScale({ aliveCount: alive.length, totalSnakes: BALANCE.snakeCount, elapsedSeconds: this.elapsed }) - this.arenaScale) * Math.min(1, dt * 1.8);
     this.updateSnakes(dt);
     this.updateRockets(dt);
     this.updatePickups();
@@ -338,6 +343,15 @@ export class MatchScene extends Phaser.Scene {
   private hurt(target: SnakeRuntime, amount: number, attacker?: SnakeRuntime, source = 'damage') {
     const result = applyDamage(target.hp, amount, Boolean(target.buffs.shield));
     target.hp = result.hp;
+    if (result.blocked) {
+      if (this.settings.damageNumbers) {
+        this.damageIndicators.push({ ...createDamageIndicator(target, 0, 'shield', false, () => this.rng.next()), text: 'BLOCK', color: 0x8be9fd, scale: 1.05 });
+        this.damageIndicators = this.damageIndicators.slice(-36);
+      }
+      this.emitAudio('damage-hit', target.isPlayer ? 0.7 : 0.25);
+      this.spawnImpact(target.x, target.y, 0x8be9fd, 5);
+      return;
+    }
     if (result.damage > 0) {
       if (this.settings.damageNumbers) {
         this.damageIndicators.push(createDamageIndicator(target, result.damage, source, result.damage >= BALANCE.rocketDamage, () => this.rng.next()));
@@ -507,9 +521,17 @@ export class MatchScene extends Phaser.Scene {
     this.graphics.clear();
     this.clearFloatingText();
     this.drawBackdrop();
-    this.title.setPosition(this.scale.width / 2, this.scale.height / 2 - 120).setText('SNAKE OF OLYMPUS');
-    this.overlay.setPosition(this.scale.width / 2, this.scale.height / 2 + 20).setText('Press SPACE to play\nA/D turn · W boost · Space rockets · Hold F fang dash\nP pause · R restart · M mute · N damage numbers\nBest score: ' + this.bestScore);
+    this.title.setPosition(this.scale.width / 2, this.scale.height / 2 - 150).setText('SNAKE\nOF OLYMPUS').setFontSize(54);
+    const cx = this.scale.width / 2;
+    const cy = this.scale.height / 2;
+    this.graphics.fillStyle(0x06101f, 0.72).fillRoundedRect(cx - 250, cy - 36, 500, 150, 22);
+    this.graphics.lineStyle(3, 0xffd166, 0.85).strokeRoundedRect(cx - 250, cy - 36, 500, 150, 22);
+    this.graphics.fillStyle(0xffd166, 0.14).fillRoundedRect(cx - 172, cy - 3, 344, 58, 18);
+    this.graphics.lineStyle(2, 0xffd166, 0.9).strokeRoundedRect(cx - 172, cy - 3, 344, 58, 18);
+    this.overlay.setPosition(cx, cy + 26).setText('SPACE TO START\n\nA/D Turn   W Boost\nF Dash     Space Fire').setFontSize(22);
     this.hud.setText('');
+    this.leaderboardText.setText('');
+    this.feedText.setText('');
   }
 
   private drawWorld() {
@@ -557,23 +579,42 @@ export class MatchScene extends Phaser.Scene {
 
   private drawPickups() {
     this.pickups.forEach((p) => {
+      const icon = getPickupIcon(p.kind, p.buff);
       const isUpgrade = p.kind === 'upgrade';
       const pulse = 1 + Math.sin(this.elapsed * 5 + p.id) * 0.08;
-      const radius = (isUpgrade ? 18 : 11) * pulse;
-      const color = isUpgrade ? 0xffd166 : 0x50fa7b;
-      this.graphics.fillStyle(color, 0.16).fillCircle(p.x, p.y, radius + 18);
-      this.graphics.lineStyle(3, color, 0.7).strokeCircle(p.x, p.y, radius + 6);
-      if (isUpgrade) {
-        this.graphics.fillStyle(0x11162a, 0.9).fillCircle(p.x, p.y, radius);
-        this.graphics.lineStyle(3, color, 0.95).strokeCircle(p.x, p.y, radius);
-        this.graphics.lineStyle(3, 0xffffff, 0.6).lineBetween(p.x - radius * 0.55, p.y, p.x + radius * 0.55, p.y);
-        this.graphics.lineStyle(3, 0xffffff, 0.6).lineBetween(p.x, p.y - radius * 0.55, p.x, p.y + radius * 0.55);
-      } else {
-        this.graphics.fillStyle(0x12351f, 0.85).fillCircle(p.x, p.y, radius + 2);
-        this.graphics.fillStyle(color, 0.95).fillCircle(p.x, p.y, radius);
-        this.graphics.fillStyle(0xffffff, 0.35).fillCircle(p.x - radius * 0.35, p.y - radius * 0.3, radius * 0.28);
-      }
+      const radius = (isUpgrade ? 20 : 13) * pulse;
+      this.graphics.fillStyle(icon.color, 0.16).fillCircle(p.x, p.y, radius + 18);
+      this.graphics.lineStyle(3, icon.color, 0.78).strokeCircle(p.x, p.y, radius + 7);
+      this.graphics.fillStyle(isUpgrade ? 0x11162a : 0x12351f, 0.92).fillCircle(p.x, p.y, radius);
+      this.graphics.fillStyle(icon.color, isUpgrade ? 0.24 : 0.92).fillCircle(p.x, p.y, isUpgrade ? radius * 0.68 : radius * 0.86);
+      this.drawPickupSymbol(p.x, p.y, radius, icon.symbol, icon.color);
     });
+  }
+
+  private drawPickupSymbol(x: number, y: number, radius: number, symbol: ReturnType<typeof getPickupIcon>['symbol'], color: number) {
+    this.graphics.lineStyle(Math.max(2, radius * 0.14), 0xffffff, 0.9);
+    this.graphics.fillStyle(0xffffff, 0.92);
+    if (symbol === 'heart') {
+      this.graphics.fillCircle(x - radius * 0.22, y - radius * 0.08, radius * 0.22);
+      this.graphics.fillCircle(x + radius * 0.22, y - radius * 0.08, radius * 0.22);
+      this.graphics.fillTriangle(x - radius * 0.46, y, x + radius * 0.46, y, x, y + radius * 0.5);
+    } else if (symbol === 'bolt') {
+      this.graphics.fillStyle(color, 1).fillTriangle(x + radius * 0.1, y - radius * 0.62, x - radius * 0.42, y + radius * 0.04, x + radius * 0.03, y + radius * 0.04);
+      this.graphics.fillTriangle(x - radius * 0.04, y - radius * 0.02, x + radius * 0.42, y - radius * 0.02, x - radius * 0.12, y + radius * 0.62);
+    } else if (symbol === 'triple-shot') {
+      [-0.42, 0, 0.42].forEach((offset) => {
+        this.graphics.fillStyle(color, 1).fillCircle(x + offset * radius, y + radius * 0.08, radius * 0.13);
+        this.graphics.lineStyle(2, 0xffffff, 0.85).lineBetween(x + offset * radius, y + radius * 0.08, x + offset * radius, y - radius * 0.46);
+      });
+    } else if (symbol === 'shield') {
+      this.graphics.lineStyle(Math.max(2, radius * 0.15), color, 1).strokeCircle(x, y, radius * 0.48);
+      this.graphics.lineStyle(Math.max(2, radius * 0.12), 0xffffff, 0.85).lineBetween(x - radius * 0.24, y, x - radius * 0.04, y + radius * 0.22);
+      this.graphics.lineStyle(Math.max(2, radius * 0.12), 0xffffff, 0.85).lineBetween(x - radius * 0.04, y + radius * 0.22, x + radius * 0.3, y - radius * 0.24);
+    } else {
+      this.graphics.fillStyle(0xff3157, 1).fillTriangle(x, y - radius * 0.58, x - radius * 0.54, y + radius * 0.42, x + radius * 0.54, y + radius * 0.42);
+      this.graphics.fillStyle(0xffffff, 0.95).fillRect(x - radius * 0.05, y - radius * 0.2, radius * 0.1, radius * 0.35);
+      this.graphics.fillCircle(x, y + radius * 0.26, radius * 0.06);
+    }
   }
 
   private drawMines() {
@@ -583,8 +624,7 @@ export class MatchScene extends Phaser.Scene {
       this.graphics.fillStyle(0xff3157, armed ? 0.16 : 0.05).fillCircle(m.x, m.y, (BALANCE.landmineRadius + 22) * pulse);
       this.graphics.lineStyle(2, armed ? 0xff3157 : 0x865050, armed ? 0.85 : 0.45).strokeCircle(m.x, m.y, BALANCE.landmineRadius + 10);
       this.graphics.fillStyle(0x190912, 0.95).fillCircle(m.x, m.y, BALANCE.landmineRadius);
-      this.graphics.lineStyle(3, armed ? 0xffd166 : 0x865050, 0.9).lineBetween(m.x - 11, m.y, m.x + 11, m.y);
-      this.graphics.lineStyle(3, armed ? 0xffd166 : 0x865050, 0.9).lineBetween(m.x, m.y - 11, m.x, m.y + 11);
+      this.drawPickupSymbol(m.x, m.y, BALANCE.landmineRadius * 0.95, 'warning', armed ? 0xff3157 : 0x865050);
     });
   }
 
@@ -623,7 +663,11 @@ export class MatchScene extends Phaser.Scene {
       const noseY = s.y + Math.sin(s.angle) * radius * 0.72;
       const leftEye = s.angle - 0.58;
       const rightEye = s.angle + 0.58;
-      this.graphics.lineStyle(3, s.buffs.shield ? 0x8be9fd : s.accent, 0.82).strokeCircle(s.x, s.y, radius + (s.dashTime > 0 ? 15 : 7));
+      if (s.buffs.shield) {
+        this.graphics.lineStyle(4, 0x8be9fd, 0.82).strokeCircle(s.x, s.y, radius + 10 + Math.sin(this.elapsed * 8) * 2);
+      } else if (s.dashTime > 0) {
+        this.graphics.lineStyle(3, s.accent, 0.72).strokeCircle(s.x, s.y, radius + 15);
+      }
       this.graphics.fillStyle(0xffffff, 0.92).fillCircle(s.x + Math.cos(leftEye) * radius * 0.42, s.y + Math.sin(leftEye) * radius * 0.42, Math.max(2.6, radius * 0.15));
       this.graphics.fillStyle(0xffffff, 0.92).fillCircle(s.x + Math.cos(rightEye) * radius * 0.42, s.y + Math.sin(rightEye) * radius * 0.42, Math.max(2.6, radius * 0.15));
       this.graphics.fillStyle(0x07101f, 0.96).fillCircle(noseX, noseY, Math.max(2, radius * 0.12));
@@ -696,15 +740,47 @@ export class MatchScene extends Phaser.Scene {
   private drawHud() {
     const player = this.snakes.find((s) => s.isPlayer)!;
     const alive = this.snakes.filter((s) => s.alive).length;
-    const board = sortLeaderboard(this.snakes).slice(0, 5).map((s, i) => `${i + 1}. ${s.name.padEnd(10).slice(0, 10)} ${s.alive ? '♥' : '×'} K${s.kills} HP${Math.round(s.hp)}`).join('\n');
-    const buffs = Object.entries(player.buffs).map(([k, v]) => `${k}:${(v ?? 0).toFixed(0)}s`).join(' ') || 'none';
     const leader = sortLeaderboard(this.snakes)[0];
-    const spectator = player.alive ? '' : `\nSPECTATING ${leader?.name ?? 'arena'} · Hermes eliminated`;
-    this.hud.setText(`Snake of Olympus${spectator}\nTime ${this.elapsed.toFixed(0)}s · Alive ${alive}/10 · Mines ${alive <= BALANCE.landmineActivationAliveCount ? 'ACTIVE' : 'dormant'}\nHP ${Math.round(player.hp)} · Kills ${player.kills} · Fruit ${player.fruits} · Score ${player.score}\nRocket ${player.cooldowns.rocket <= 0 ? 'READY' : player.cooldowns.rocket.toFixed(1)} · Fang ${player.cooldowns.charge <= 0 ? 'READY' : player.cooldowns.charge.toFixed(1)} · Buffs ${buffs}\n\nLeaderboard\n${board}\n\nFeed\n${this.feed.slice(-BALANCE.feedRowsShown).map((f) => '• ' + f.text).join('\n')}`);
+    const spectator = player.alive ? '' : ` · SPECTATING ${leader?.name ?? 'arena'}`;
+    const arenaPct = Math.round(this.arenaScale * 100);
+    const buffs = Object.entries(player.buffs).map(([k, v]) => `${k.toUpperCase()} ${Math.ceil(v ?? 0)}s`).join('   ') || 'NO BUFF';
+    this.hud.setText(`HP ${Math.round(player.hp)}   K ${player.kills}   SCORE ${player.score}   ALIVE ${alive}/10   ARENA ${arenaPct}%${spectator}\nROCKET ${player.cooldowns.rocket <= 0 ? 'READY' : player.cooldowns.rocket.toFixed(1) + 's'}   FANG ${player.cooldowns.charge <= 0 ? 'READY' : player.cooldowns.charge.toFixed(1) + 's'}   ${buffs}`);
+
+    const top = sortLeaderboard(this.snakes).slice(0, 5);
+    const icons = ['♛', 'Ⅱ', 'Ⅲ', 'Ⅳ', 'Ⅴ'];
+    this.leaderboardText
+      .setPosition(this.scale.width - 308, 190)
+      .setText(top.map((s, i) => `${icons[i]} ${s.name.padEnd(10).slice(0, 10)}  ${s.alive ? '●' : '×'}  K${s.kills}  ${Math.max(0, Math.round(s.hp)).toString().padStart(2, '0')}`).join('\n'));
+    this.feedText
+      .setPosition(16, this.scale.height - 98)
+      .setText(this.feed.slice(-BALANCE.feedRowsShown).map((f) => `› ${f.text}`).join('\n'));
+
+    const camera = this.cameras.main;
+    const zoom = camera.zoom || 1;
+    const lx = camera.scrollX + (this.scale.width - 328) / zoom;
+    const ly = camera.scrollY + 154 / zoom;
+    this.graphics.fillStyle(0x06101f, 0.78).fillRoundedRect(lx, ly, 308 / zoom, 174 / zoom, 16 / zoom);
+    this.graphics.lineStyle(2 / zoom, 0xffd166, 0.76).strokeRoundedRect(lx, ly, 308 / zoom, 174 / zoom, 16 / zoom);
+    this.graphics.fillStyle(0xffd166, 0.14).fillRoundedRect(lx + 10 / zoom, ly + 10 / zoom, 288 / zoom, 30 / zoom, 10 / zoom);
+    this.graphics.lineStyle(1 / zoom, 0x8be9fd, 0.38).lineBetween(lx + 16 / zoom, ly + 50 / zoom, lx + 292 / zoom, ly + 50 / zoom);
+    this.graphics.fillStyle(0xffd166, 0.9).fillCircle(lx + 28 / zoom, ly + 25 / zoom, 7 / zoom);
+    this.graphics.lineStyle(2 / zoom, 0xffd166, 0.9).lineBetween(lx + 42 / zoom, ly + 25 / zoom, lx + 132 / zoom, ly + 25 / zoom);
+
+    top.forEach((s, i) => {
+      const y = ly + (58 + i * 22) / zoom;
+      const barWidth = Math.max(3, Math.min(88, (Math.max(0, s.hp) / BALANCE.maxHp) * 88));
+      this.graphics.fillStyle(0x10203a, 0.9).fillRoundedRect(lx + 194 / zoom, y + 3 / zoom, 88 / zoom, 7 / zoom, 4 / zoom);
+      this.graphics.fillStyle(s.alive ? s.color : 0x5d6677, 0.9).fillRoundedRect(lx + 194 / zoom, y + 3 / zoom, barWidth / zoom, 7 / zoom, 4 / zoom);
+    });
+
+    const fx = camera.scrollX + 8 / zoom;
+    const fy = camera.scrollY + (this.scale.height - 112) / zoom;
+    this.graphics.fillStyle(0x06101f, 0.66).fillRoundedRect(fx, fy, 380 / zoom, 96 / zoom, 14 / zoom);
+    this.graphics.lineStyle(1.5 / zoom, 0x8be9fd, 0.35).strokeRoundedRect(fx, fy, 380 / zoom, 96 / zoom, 14 / zoom);
   }
 
   private drawOverlay(text: string) {
-    this.overlay.setPosition(this.scale.width / 2, this.scale.height / 2).setText(text);
+    this.overlay.setPosition(this.scale.width / 2, this.scale.height / 2).setFontSize(28).setText(text);
   }
 
   private updateHudSize() {
