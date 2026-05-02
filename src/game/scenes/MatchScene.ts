@@ -71,15 +71,15 @@ export class MatchScene extends Phaser.Scene {
     this.settings = safeJsonRead(storage, 'soo:settings', DEFAULT_SETTINGS);
     this.audioEvents = createAudioEventQueue(this.settings);
     this.bestScore = safeJsonRead(storage, 'soo:bestScore', 0);
-    this.cameras.main.setBackgroundColor('#07101f');
+    this.cameras.main.setBackgroundColor('#120b18');
     this.cameras.main.setBounds(0, 0, WORLD.width, WORLD.height);
     this.graphics = this.add.graphics();
     this.menuBackground = this.add.image(this.scale.width / 2, this.scale.height / 2, 'start-screen').setOrigin(0.5).setScrollFactor(0).setDepth(1);
-    this.hud = this.add.text(16, 12, '', { fontFamily: 'monospace', fontSize: '15px', color: '#dff7ff', lineSpacing: 4 }).setScrollFactor(0).setDepth(20);
-    this.leaderboardText = this.add.text(0, 0, '', { fontFamily: 'monospace', fontSize: '14px', color: '#eefaff', lineSpacing: 6 }).setScrollFactor(0).setDepth(22);
-    this.feedText = this.add.text(16, 0, '', { fontFamily: 'monospace', fontSize: '13px', color: '#cde8ff', lineSpacing: 5 }).setScrollFactor(0).setDepth(22);
-    this.overlay = this.add.text(0, 0, '', { fontFamily: 'Arial Black, Arial', fontSize: '28px', color: '#ffffff', align: 'center', stroke: '#06101f', strokeThickness: 8 }).setOrigin(0.5).setScrollFactor(0).setDepth(30);
-    this.title = this.add.text(0, 0, '', { fontFamily: 'Arial Black, Arial', fontSize: '42px', color: '#ffd166', align: 'center', stroke: '#06101f', strokeThickness: 10 }).setOrigin(0.5).setScrollFactor(0).setDepth(31);
+    this.hud = this.add.text(16, 12, '', { fontFamily: 'Georgia, Times New Roman, serif', fontSize: '15px', color: '#fff4d6', lineSpacing: 5, stroke: '#180b24', strokeThickness: 3 }).setScrollFactor(0).setDepth(20);
+    this.leaderboardText = this.add.text(0, 0, '', { fontFamily: 'Georgia, Times New Roman, serif', fontSize: '14px', color: '#fff8e8', lineSpacing: 7, stroke: '#180b24', strokeThickness: 2 }).setScrollFactor(0).setDepth(22);
+    this.feedText = this.add.text(16, 0, '', { fontFamily: 'Georgia, Times New Roman, serif', fontSize: '13px', color: '#f3d48b', lineSpacing: 6, stroke: '#160812', strokeThickness: 2 }).setScrollFactor(0).setDepth(22);
+    this.overlay = this.add.text(0, 0, '', { fontFamily: 'Georgia, Times New Roman, serif', fontSize: '28px', color: '#fff4d6', align: 'center', stroke: '#160812', strokeThickness: 8 }).setOrigin(0.5).setScrollFactor(0).setDepth(30);
+    this.title = this.add.text(0, 0, '', { fontFamily: 'Georgia, Times New Roman, serif', fontSize: '42px', color: '#ffd166', align: 'center', stroke: '#160812', strokeThickness: 10 }).setOrigin(0.5).setScrollFactor(0).setDepth(31);
     const keyboard = this.input.keyboard!;
     this.keys = keyboard.addKeys('A,D,W,F,SPACE,LEFT,RIGHT,UP,ESC,P,R,M,N') as Record<string, Phaser.Input.Keyboard.Key>;
     keyboard.on('keydown-SPACE', () => this.matchState === 'menu' && this.startMatch());
@@ -563,29 +563,66 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private drawBackdrop() {
-    this.graphics.fillGradientStyle(0x030712, 0x0b1730, 0x21103f, 0x050816, 1).fillRect(0, 0, WORLD.width, WORLD.height);
-    for (let i = 0; i < 90; i++) {
+    this.graphics.fillGradientStyle(0x14091f, 0x2c1743, 0x07101f, 0x03040a, 1).fillRect(0, 0, WORLD.width, WORLD.height);
+
+    this.graphics.fillStyle(0xffd166, 0.08).fillCircle(WORLD.width * 0.5, WORLD.height * 0.16, 620);
+    this.graphics.fillStyle(0xfff1b8, 0.05).fillCircle(WORLD.width * 0.5, WORLD.height * 0.16, 820);
+    this.graphics.lineStyle(3, 0xffd166, 0.08).strokeCircle(WORLD.width * 0.5, WORLD.height * 0.16, 700);
+
+    for (let i = 0; i < 110; i++) {
       const star = getOlympusStar(i);
-      this.graphics.fillStyle(i % 7 === 0 ? 0xffd166 : 0x9bdcff, star.alpha).fillCircle(star.x * WORLD.width, star.y * WORLD.height, star.size);
+      const divineStar = i % 6 === 0;
+      this.graphics.fillStyle(divineStar ? 0xffd166 : 0xf7e8c8, star.alpha * (divineStar ? 0.9 : 0.55)).fillCircle(star.x * WORLD.width, star.y * WORLD.height, star.size * (divineStar ? 1.25 : 0.85));
     }
-    this.graphics.lineStyle(2, 0x1b335f, 0.18);
-    for (let x = -WORLD.height; x <= WORLD.width; x += 210) this.graphics.lineBetween(x, 0, x + WORLD.height, WORLD.height);
-    this.graphics.lineStyle(1, 0x6f52ff, 0.1);
-    for (let y = 80; y <= WORLD.height; y += 160) this.graphics.lineBetween(0, y, WORLD.width, y + Math.sin(y * 0.01) * 70);
-    this.graphics.fillStyle(0xffd166, 0.05).fillCircle(WORLD.width * 0.5, WORLD.height * 0.48, 520);
-    this.graphics.lineStyle(3, 0xffd166, 0.09).strokeCircle(WORLD.width * 0.5, WORLD.height * 0.48, 570);
+
+    this.graphics.lineStyle(2, 0xffd166, 0.08);
+    for (let i = -8; i <= 8; i++) {
+      const x = WORLD.width * 0.5 + i * 150;
+      this.graphics.lineBetween(WORLD.width * 0.5, WORLD.height * 0.08, x, WORLD.height);
+    }
+
+    this.graphics.fillStyle(0x1b1a2c, 0.62).fillTriangle(0, WORLD.height * 0.58, WORLD.width * 0.22, WORLD.height * 0.28, WORLD.width * 0.46, WORLD.height * 0.58);
+    this.graphics.fillTriangle(WORLD.width * 0.32, WORLD.height * 0.6, WORLD.width * 0.58, WORLD.height * 0.32, WORLD.width * 0.86, WORLD.height * 0.6);
+    this.graphics.fillTriangle(WORLD.width * 0.62, WORLD.height * 0.58, WORLD.width * 0.84, WORLD.height * 0.26, WORLD.width, WORLD.height * 0.58);
+    this.graphics.lineStyle(2, 0xfff4d6, 0.12);
+    for (let y = 120; y <= WORLD.height; y += 170) this.graphics.lineBetween(0, y, WORLD.width, y + Math.sin(y * 0.008) * 54);
+
+    const templeY = WORLD.height - 360;
+    this.graphics.fillStyle(0xf7e8c8, 0.08).fillRoundedRect(WORLD.width * 0.5 - 520, templeY + 16, 1040, 230, 18);
+    this.graphics.fillStyle(0xffd166, 0.12).fillTriangle(WORLD.width * 0.5 - 560, templeY + 48, WORLD.width * 0.5, templeY - 70, WORLD.width * 0.5 + 560, templeY + 48);
+    this.graphics.lineStyle(4, 0xffd166, 0.18).lineBetween(WORLD.width * 0.5 - 560, templeY + 48, WORLD.width * 0.5 + 560, templeY + 48);
+    for (let i = 0; i < 9; i++) {
+      const x = WORLD.width * 0.5 - 420 + i * 105;
+      this.graphics.fillStyle(0xfff4d6, 0.11).fillRoundedRect(x, templeY + 70, 42, 210, 12);
+      this.graphics.lineStyle(2, 0xffd166, 0.11).lineBetween(x + 12, templeY + 82, x + 12, templeY + 264);
+      this.graphics.lineBetween(x + 30, templeY + 82, x + 30, templeY + 264);
+      this.graphics.fillStyle(0xffd166, 0.11).fillRoundedRect(x - 12, templeY + 56, 66, 18, 7);
+      this.graphics.fillRoundedRect(x - 14, templeY + 268, 70, 18, 7);
+    }
+
+    this.graphics.fillStyle(0xffd166, 0.045).fillCircle(WORLD.width * 0.5, WORLD.height * 0.48, 560);
+    this.graphics.lineStyle(3, 0xffd166, 0.12).strokeCircle(WORLD.width * 0.5, WORLD.height * 0.48, 570);
+    this.graphics.lineStyle(2, 0xffffff, 0.08).strokeCircle(WORLD.width * 0.5, WORLD.height * 0.48, 410);
   }
 
   private drawArena(bounds: ReturnType<typeof getArenaBounds>) {
-    this.graphics.fillStyle(0x050914, 0.28).fillRoundedRect(bounds.left, bounds.top, bounds.width, bounds.height, 24);
-    this.graphics.lineStyle(18, 0x8be9fd, 0.12).strokeRoundedRect(bounds.left - 7, bounds.top - 7, bounds.width + 14, bounds.height + 14, 32);
-    this.graphics.lineStyle(8, 0xffd166, 0.45).strokeRoundedRect(bounds.left, bounds.top, bounds.width, bounds.height, 24);
-    this.graphics.lineStyle(2, 0xffffff, 0.42).strokeRoundedRect(bounds.left + 7, bounds.top + 7, bounds.width - 14, bounds.height - 14, 18);
-    this.graphics.lineStyle(1, 0x2d426e, 0.32);
-    for (let x = Math.ceil(bounds.left / 130) * 130; x <= bounds.right; x += 130) this.graphics.lineBetween(x, bounds.top, x, bounds.bottom);
-    for (let y = Math.ceil(bounds.top / 130) * 130; y <= bounds.bottom; y += 130) this.graphics.lineBetween(bounds.left, y, bounds.right, y);
-    this.graphics.lineStyle(2, 0xffd166, 0.12).strokeCircle(bounds.centerX, bounds.centerY, Math.min(bounds.width, bounds.height) * 0.22);
-    this.graphics.lineStyle(2, 0x8be9fd, 0.1).strokeCircle(bounds.centerX, bounds.centerY, Math.min(bounds.width, bounds.height) * 0.36);
+    this.graphics.fillStyle(0x201526, 0.44).fillRoundedRect(bounds.left - 18, bounds.top - 18, bounds.width + 36, bounds.height + 36, 34);
+    this.graphics.lineStyle(22, 0xffd166, 0.1).strokeRoundedRect(bounds.left - 10, bounds.top - 10, bounds.width + 20, bounds.height + 20, 32);
+    this.graphics.lineStyle(10, 0xc69b4d, 0.54).strokeRoundedRect(bounds.left, bounds.top, bounds.width, bounds.height, 24);
+    this.graphics.lineStyle(3, 0xfff4d6, 0.5).strokeRoundedRect(bounds.left + 8, bounds.top + 8, bounds.width - 16, bounds.height - 16, 18);
+    this.graphics.fillStyle(0xfff4d6, 0.04).fillRoundedRect(bounds.left + 16, bounds.top + 16, bounds.width - 32, bounds.height - 32, 16);
+
+    this.graphics.lineStyle(1, 0xfff4d6, 0.14);
+    for (let x = Math.ceil(bounds.left / 130) * 130; x <= bounds.right; x += 130) this.graphics.lineBetween(x, bounds.top + 12, x, bounds.bottom - 12);
+    for (let y = Math.ceil(bounds.top / 130) * 130; y <= bounds.bottom; y += 130) this.graphics.lineBetween(bounds.left + 12, y, bounds.right - 12, y);
+
+    this.graphics.lineStyle(2, 0xffd166, 0.18).strokeCircle(bounds.centerX, bounds.centerY, Math.min(bounds.width, bounds.height) * 0.22);
+    this.graphics.lineStyle(2, 0xffffff, 0.1).strokeCircle(bounds.centerX, bounds.centerY, Math.min(bounds.width, bounds.height) * 0.36);
+    this.graphics.lineStyle(1.5, 0xc69b4d, 0.18);
+    for (let i = 0; i < 12; i++) {
+      const angle = (Math.PI * 2 * i) / 12;
+      this.graphics.lineBetween(bounds.centerX, bounds.centerY, bounds.centerX + Math.cos(angle) * Math.min(bounds.width, bounds.height) * 0.2, bounds.centerY + Math.sin(angle) * Math.min(bounds.width, bounds.height) * 0.2);
+    }
   }
 
   private drawPickups() {
@@ -739,8 +776,9 @@ export class MatchScene extends Phaser.Scene {
       width: 180 / zoom,
       height: 110 / zoom,
     };
-    this.graphics.fillStyle(0x06101f, 0.76).fillRoundedRect(radar.x - 10 / zoom, radar.y - 10 / zoom, radar.width + 20 / zoom, radar.height + 22 / zoom, 10 / zoom);
-    this.graphics.lineStyle(2 / zoom, 0x8be9fd, 0.8).strokeRect(radar.x, radar.y, radar.width, radar.height);
+    this.graphics.fillStyle(0x221327, 0.78).fillRoundedRect(radar.x - 10 / zoom, radar.y - 10 / zoom, radar.width + 20 / zoom, radar.height + 22 / zoom, 10 / zoom);
+    this.graphics.lineStyle(3 / zoom, 0xffd166, 0.72).strokeRect(radar.x, radar.y, radar.width, radar.height);
+    this.graphics.lineStyle(1 / zoom, 0xfff4d6, 0.32).strokeRect(radar.x + 5 / zoom, radar.y + 5 / zoom, radar.width - 10 / zoom, radar.height - 10 / zoom);
     const blips = calculateRadarBlips({ snakes: this.snakes, pickups: this.pickups, mines: this.mines, bounds, radar });
     for (const blip of blips) {
       const radius = blip.kind === 'player' ? 4.2 / zoom : blip.kind === 'snake' ? 3.1 / zoom : 2.4 / zoom;
@@ -770,11 +808,12 @@ export class MatchScene extends Phaser.Scene {
     const zoom = camera.zoom || 1;
     const lx = camera.scrollX + (this.scale.width - 328) / zoom;
     const ly = camera.scrollY + 154 / zoom;
-    this.graphics.fillStyle(0x06101f, 0.78).fillRoundedRect(lx, ly, 308 / zoom, 174 / zoom, 16 / zoom);
-    this.graphics.lineStyle(2 / zoom, 0xffd166, 0.76).strokeRoundedRect(lx, ly, 308 / zoom, 174 / zoom, 16 / zoom);
-    this.graphics.fillStyle(0xffd166, 0.14).fillRoundedRect(lx + 10 / zoom, ly + 10 / zoom, 288 / zoom, 30 / zoom, 10 / zoom);
-    this.graphics.lineStyle(1 / zoom, 0x8be9fd, 0.38).lineBetween(lx + 16 / zoom, ly + 50 / zoom, lx + 292 / zoom, ly + 50 / zoom);
-    this.graphics.fillStyle(0xffd166, 0.9).fillCircle(lx + 28 / zoom, ly + 25 / zoom, 7 / zoom);
+    this.graphics.fillStyle(0x221327, 0.82).fillRoundedRect(lx, ly, 308 / zoom, 174 / zoom, 16 / zoom);
+    this.graphics.lineStyle(3 / zoom, 0xffd166, 0.78).strokeRoundedRect(lx, ly, 308 / zoom, 174 / zoom, 16 / zoom);
+    this.graphics.lineStyle(1 / zoom, 0xfff4d6, 0.28).strokeRoundedRect(lx + 7 / zoom, ly + 7 / zoom, 294 / zoom, 160 / zoom, 12 / zoom);
+    this.graphics.fillStyle(0xffd166, 0.16).fillRoundedRect(lx + 10 / zoom, ly + 10 / zoom, 288 / zoom, 30 / zoom, 10 / zoom);
+    this.graphics.lineStyle(1 / zoom, 0xfff4d6, 0.38).lineBetween(lx + 16 / zoom, ly + 50 / zoom, lx + 292 / zoom, ly + 50 / zoom);
+    this.graphics.fillStyle(0xffd166, 0.92).fillCircle(lx + 28 / zoom, ly + 25 / zoom, 7 / zoom);
     this.graphics.lineStyle(2 / zoom, 0xffd166, 0.9).lineBetween(lx + 42 / zoom, ly + 25 / zoom, lx + 132 / zoom, ly + 25 / zoom);
 
     top.forEach((s, i) => {
@@ -786,8 +825,8 @@ export class MatchScene extends Phaser.Scene {
 
     const fx = camera.scrollX + 8 / zoom;
     const fy = camera.scrollY + (this.scale.height - 112) / zoom;
-    this.graphics.fillStyle(0x06101f, 0.66).fillRoundedRect(fx, fy, 380 / zoom, 96 / zoom, 14 / zoom);
-    this.graphics.lineStyle(1.5 / zoom, 0x8be9fd, 0.35).strokeRoundedRect(fx, fy, 380 / zoom, 96 / zoom, 14 / zoom);
+    this.graphics.fillStyle(0x120b18, 0.72).fillRoundedRect(fx, fy, 380 / zoom, 96 / zoom, 14 / zoom);
+    this.graphics.lineStyle(1.5 / zoom, 0xffd166, 0.42).strokeRoundedRect(fx, fy, 380 / zoom, 96 / zoom, 14 / zoom);
   }
 
   private drawOverlay(text: string) {
