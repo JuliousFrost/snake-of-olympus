@@ -11,12 +11,21 @@ import { safeJsonRead, safeJsonWrite, getSafeStorage } from '../core/persistence
 import { chooseSpawnPoint, maintainPickupTargets } from '../systems/spawnSystem';
 import { calculateRadarBlips } from '../systems/radarSystem';
 import { createAudioEventQueue, type AudioEventName } from '../systems/audioSystem';
+import {
+  createDamageIndicator,
+  getOlympusStar,
+  getSnakeSegmentStyle,
+  updateDamageIndicators,
+  type DamageIndicator,
+} from '../systems/visualSystem';
 
 type Rocket = { x: number; y: number; vx: number; vy: number; life: number; ownerId: string; color: number };
 type Pickup = { id: number; x: number; y: number; kind: PickupKind; buff?: BuffKind; value: number };
 type Mine = { x: number; y: number; armed: number; cooldown: number };
 type Feed = { text: string; life: number };
 type Settings = { shake: boolean; damageNumbers: boolean; masterVolume: number; sfxVolume: number };
+type Particle = { x: number; y: number; vx: number; vy: number; life: number; maxLife: number; color: number; size: number; alpha: number };
+type AudioEngine = { context: AudioContext; gain: GainNode };
 
 const DEFAULT_SETTINGS: Settings = { shake: true, damageNumbers: true, masterVolume: 0.7, sfxVolume: 0.8 };
 
@@ -26,6 +35,9 @@ export class MatchScene extends Phaser.Scene {
   private rockets: Rocket[] = [];
   private pickups: Pickup[] = [];
   private mines: Mine[] = [];
+  private particles: Particle[] = [];
+  private damageIndicators: DamageIndicator[] = [];
+  private floatingTextObjects: Phaser.GameObjects.Text[] = [];
   private feed: Feed[] = [];
   private graphics!: Phaser.GameObjects.Graphics;
   private hud!: Phaser.GameObjects.Text;
@@ -39,6 +51,7 @@ export class MatchScene extends Phaser.Scene {
   private pickupId = 1;
   private settings: Settings = DEFAULT_SETTINGS;
   private audioEvents = createAudioEventQueue(DEFAULT_SETTINGS);
+  private audioEngine?: AudioEngine;
   private bestScore = 0;
 
   constructor() {
@@ -65,6 +78,7 @@ export class MatchScene extends Phaser.Scene {
     keyboard.on('keydown-M', () => this.toggleMute());
     keyboard.on('keydown-N', () => this.toggleDamageNumbers());
     window.addEventListener('blur', () => { if (this.matchState === 'active') this.matchState = 'paused'; });
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.cleanupSceneObjects());
     this.drawMenu();
   }
 
@@ -75,6 +89,9 @@ export class MatchScene extends Phaser.Scene {
     this.rockets = [];
     this.pickups = [];
     this.mines = [];
+    this.particles = [];
+    this.damageIndicators = [];
+    this.clearFloatingText();
     this.feed = [{ text: 'The gates of Olympus open.', life: BALANCE.feedLife }];
     this.nextMine = 1.2;
     const startBounds = getArenaBounds(1);
@@ -123,6 +140,7 @@ export class MatchScene extends Phaser.Scene {
     this.updateMines(dt);
     this.resolveCollisions();
     this.maintainPickups();
+    this.updateVisualEffects(dt);
     this.feed.forEach((f) => f.life -= dt);
     this.feed = this.feed.filter((f) => f.life > 0).slice(-BALANCE.feedMaxStored);
     this.snakes.forEach((s) => {
@@ -166,6 +184,7 @@ export class MatchScene extends Phaser.Scene {
         s.cooldowns.wall = BALANCE.wallCrashCooldown;
       }
       s.x = clamped.x; s.y = clamped.y;
+      if (s.dashTime > 0 || canBoost) this.spawnTrail(s, canBoost ? 0.5 : 1);
       s.body.unshift({ x: s.x, y: s.y });
       const needed = getSegmentCount(s.hp);
       while (s.body.length > needed) s.body.pop();
@@ -200,8 +219,14 @@ export class MatchScene extends Phaser.Scene {
       const fruit = this.pickups.filter((p) => lowHp ? p.kind === 'fruit' : true).sort((a, b) => distanceSq(s, a) - distanceSq(s, b))[0];
       const enemy = this.snakes.filter((o) => o.alive && o.id !== s.id).sort((a, b) => a.hp - b.hp || distanceSq(s, a) - distanceSq(s, b))[0];
       const mine = this.mines.find((m) => distance(s, m) < BALANCE.aiMineAvoidanceRadius);
+      const bodyThreat = this.snakes
+        .filter((o) => o.alive && o.id !== s.id)
+        .flatMap((o) => o.body.slice(8).map((seg) => ({ ...seg, ownerHp: o.hp })))
+        .filter((seg) => distance(s, seg) < 105)
+        .sort((a, b) => distanceSq(s, a) - distanceSq(s, b))[0];
       if (nearWall) s.targetAngle = angleTo(s.x, s.y, bounds.centerX, bounds.centerY);
       else if (mine) s.targetAngle = angleTo(mine.x, mine.y, s.x, s.y);
+      else if (bodyThreat) s.targetAngle = angleTo(bodyThreat.x, bodyThreat.y, s.x, s.y);
       else if (fruit && (lowHp || this.rng.next() < 0.55)) s.targetAngle = angleTo(s.x, s.y, fruit.x, fruit.y);
       else if (enemy) s.targetAngle = angleTo(s.x, s.y, enemy.x, enemy.y);
       if (enemy) {
@@ -313,13 +338,58 @@ export class MatchScene extends Phaser.Scene {
   private hurt(target: SnakeRuntime, amount: number, attacker?: SnakeRuntime, source = 'damage') {
     const result = applyDamage(target.hp, amount, Boolean(target.buffs.shield));
     target.hp = result.hp;
-    if (result.damage > 0) this.emitAudio('damage-hit', target.isPlayer ? 1 : 0.35);
+    if (result.damage > 0) {
+      if (this.settings.damageNumbers) {
+        this.damageIndicators.push(createDamageIndicator(target, result.damage, source, result.damage >= BALANCE.rocketDamage, () => this.rng.next()));
+        this.damageIndicators = this.damageIndicators.slice(-36);
+      }
+      this.emitAudio('damage-hit', target.isPlayer ? 1 : 0.35);
+      this.spawnImpact(target.x, target.y, source === 'mine' ? 0xffb000 : source === 'fang' ? 0xff4dff : 0xff4d6d, source === 'rocket' || source === 'mine' ? 12 : 7);
+      if (this.settings.shake && (target.isPlayer || source === 'rocket' || source === 'mine')) this.cameras.main.shake(source === 'mine' ? 120 : 70, source === 'mine' ? 0.008 : 0.004);
+    }
     if (result.killed) {
       target.alive = false;
       this.feedLine(`${attacker?.name ?? source} defeated ${target.name}`);
       if (attacker && attacker.id !== target.id) attacker.kills += 1;
       this.emitAudio('snake-death');
       for (let i = 0; i < 5; i++) this.spawnPickup(target.x + this.rng.between(-60, 60), target.y + this.rng.between(-60, 60), 'fruit');
+    }
+  }
+
+  private updateVisualEffects(dt: number) {
+    this.damageIndicators = updateDamageIndicators(this.damageIndicators, dt);
+    this.particles = this.particles
+      .map((p) => {
+        const life = p.life - dt;
+        const t = Math.max(0, life / p.maxLife);
+        return { ...p, x: p.x + p.vx * dt, y: p.y + p.vy * dt, vy: p.vy + 10 * dt, life, alpha: t };
+      })
+      .filter((p) => p.life > 0)
+      .slice(-260);
+  }
+
+  private spawnTrail(s: SnakeRuntime, intensity = 1) {
+    if (this.rng.next() > 0.62) return;
+    const offset = getHeadRadius(s.hp) * 0.7;
+    this.particles.push({
+      x: s.x - Math.cos(s.angle) * offset + this.rng.between(-8, 8),
+      y: s.y - Math.sin(s.angle) * offset + this.rng.between(-8, 8),
+      vx: -Math.cos(s.angle) * this.rng.between(15, 55) + this.rng.between(-20, 20),
+      vy: -Math.sin(s.angle) * this.rng.between(15, 55) + this.rng.between(-20, 20),
+      life: 0.28 + intensity * 0.26,
+      maxLife: 0.28 + intensity * 0.26,
+      color: s.dashTime > 0 ? s.accent : s.color,
+      size: this.rng.between(3, 8) * intensity,
+      alpha: 1,
+    });
+  }
+
+  private spawnImpact(x: number, y: number, color: number, count: number) {
+    for (let i = 0; i < count; i++) {
+      const angle = this.rng.between(0, Math.PI * 2);
+      const speed = this.rng.between(50, 180);
+      const life = this.rng.between(0.25, 0.62);
+      this.particles.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, life, maxLife: life, color, size: this.rng.between(2, 6), alpha: 1 });
     }
   }
 
@@ -378,15 +448,64 @@ export class MatchScene extends Phaser.Scene {
     }
   }
 
-  private togglePause() { if (this.matchState === 'active') this.matchState = 'paused'; else if (this.matchState === 'paused') { this.overlay.setText(''); this.matchState = 'active'; } }
-  private toggleMute() { this.settings.masterVolume = this.settings.masterVolume > 0 ? 0 : 0.7; this.audioEvents = createAudioEventQueue(this.settings); safeJsonWrite(getSafeStorage(window), 'soo:settings', this.settings); }
-  private toggleDamageNumbers() { this.settings.damageNumbers = !this.settings.damageNumbers; safeJsonWrite(getSafeStorage(window), 'soo:settings', this.settings); }
+  private togglePause() { if (this.matchState === 'active') this.matchState = 'paused'; else if (this.matchState === 'paused') { this.overlay.setText(''); this.matchState = 'active'; } this.emitAudio('menu-confirm', 0.7); }
+  private toggleMute() { this.settings.masterVolume = this.settings.masterVolume > 0 ? 0 : 0.7; this.audioEvents = createAudioEventQueue(this.settings); safeJsonWrite(getSafeStorage(window), 'soo:settings', this.settings); this.emitAudio('menu-confirm', 0.7); }
+  private toggleDamageNumbers() { this.settings.damageNumbers = !this.settings.damageNumbers; safeJsonWrite(getSafeStorage(window), 'soo:settings', this.settings); this.emitAudio('menu-confirm', 0.7); }
   private emitAudio(name: AudioEventName, intensity = 1) { this.audioEvents.emit(name, intensity); }
-  private flushAudioHooks() { this.audioEvents.drain(); }
+  private flushAudioHooks() {
+    for (const event of this.audioEvents.drain()) this.playProceduralSound(event.name, event.volume);
+  }
+
+  private getAudioEngine() {
+    if (this.settings.masterVolume <= 0 || this.settings.sfxVolume <= 0) return undefined;
+    if (!this.audioEngine) {
+      const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioContextClass) return undefined;
+      const context = new AudioContextClass();
+      const gain = context.createGain();
+      gain.gain.value = 0.16;
+      gain.connect(context.destination);
+      this.audioEngine = { context, gain };
+    }
+    if (this.audioEngine.context.state === 'suspended') void this.audioEngine.context.resume();
+    return this.audioEngine;
+  }
+
+  private playProceduralSound(name: AudioEventName, volume: number) {
+    const engine = this.getAudioEngine();
+    if (!engine || volume <= 0) return;
+    const now = engine.context.currentTime;
+    const profile: Record<AudioEventName, { frequency: number; end: number; type: OscillatorType }> = {
+      'fruit-pickup': { frequency: 660, end: 0.09, type: 'sine' },
+      'upgrade-pickup': { frequency: 880, end: 0.16, type: 'triangle' },
+      'rocket-fire': { frequency: 155, end: 0.12, type: 'sawtooth' },
+      'rocket-impact': { frequency: 90, end: 0.18, type: 'square' },
+      'dash-launch': { frequency: 330, end: 0.2, type: 'sawtooth' },
+      'damage-hit': { frequency: 120, end: 0.09, type: 'square' },
+      'snake-death': { frequency: 70, end: 0.32, type: 'sawtooth' },
+      'mine-trigger': { frequency: 55, end: 0.24, type: 'square' },
+      victory: { frequency: 523, end: 0.28, type: 'triangle' },
+      'menu-confirm': { frequency: 720, end: 0.08, type: 'sine' },
+    };
+    const sound = profile[name];
+    const oscillator = engine.context.createOscillator();
+    const gain = engine.context.createGain();
+    oscillator.type = sound.type;
+    oscillator.frequency.setValueAtTime(sound.frequency, now);
+    oscillator.frequency.exponentialRampToValueAtTime(Math.max(35, sound.frequency * (name === 'victory' ? 1.5 : 0.55)), now + sound.end);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, volume * this.settings.masterVolume * this.settings.sfxVolume * 0.22), now + 0.018);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + sound.end);
+    oscillator.connect(gain).connect(engine.gain);
+    oscillator.start(now);
+    oscillator.stop(now + sound.end + 0.02);
+  }
+
   private feedLine(text: string) { this.feed.push({ text, life: BALANCE.feedLife }); this.feed = this.feed.slice(-BALANCE.feedMaxStored); }
 
   private drawMenu() {
     this.graphics.clear();
+    this.clearFloatingText();
     this.drawBackdrop();
     this.title.setPosition(this.scale.width / 2, this.scale.height / 2 - 120).setText('SNAKE OF OLYMPUS');
     this.overlay.setPosition(this.scale.width / 2, this.scale.height / 2 + 20).setText('Press SPACE to play\nA/D turn · W boost · Space rockets · Hold F fang dash\nP pause · R restart · M mute · N damage numbers\nBest score: ' + this.bestScore);
@@ -396,29 +515,164 @@ export class MatchScene extends Phaser.Scene {
   private drawWorld() {
     this.title.setText('');
     this.graphics.clear();
+    this.clearFloatingText();
     this.drawBackdrop();
     const b = getArenaBounds(this.arenaScale);
-    this.graphics.lineStyle(5, 0xffd166, 0.9).strokeRect(b.left, b.top, b.width, b.height);
-    this.graphics.lineStyle(1, 0x2d426e, 0.3);
-    for (let x = 0; x <= WORLD.width; x += 130) this.graphics.lineBetween(x, 0, x, WORLD.height);
-    for (let y = 0; y <= WORLD.height; y += 130) this.graphics.lineBetween(0, y, WORLD.width, y);
-    this.pickups.forEach((p) => { this.graphics.fillStyle(p.kind === 'upgrade' ? 0xffd166 : 0x50fa7b, 0.95).fillCircle(p.x, p.y, p.kind === 'upgrade' ? 18 : 11); this.graphics.lineStyle(2, 0xffffff, 0.35).strokeCircle(p.x, p.y, p.kind === 'upgrade' ? 23 : 15); });
-    this.mines.forEach((m) => { this.graphics.fillStyle(m.armed > 0.65 ? 0xff3157 : 0x865050, 0.9).fillCircle(m.x, m.y, BALANCE.landmineRadius); this.graphics.lineStyle(2, 0xffd166, 0.7).strokeCircle(m.x, m.y, BALANCE.landmineRadius + 8); });
-    this.rockets.forEach((r) => { this.graphics.lineStyle(4, r.color, 1).lineBetween(r.x - r.vx * 0.025, r.y - r.vy * 0.025, r.x, r.y); this.graphics.fillStyle(0xffffff, 1).fillCircle(r.x, r.y, BALANCE.rocketRadius); });
-    for (const s of this.snakes) {
-      if (!s.alive) continue;
-      this.graphics.lineStyle(getHeadRadius(s.hp) * 1.5, s.color, 0.85);
-      for (let i = 1; i < s.body.length; i++) this.graphics.lineBetween(s.body[i - 1].x, s.body[i - 1].y, s.body[i].x, s.body[i].y);
-      this.graphics.fillStyle(s.color, 1).fillCircle(s.x, s.y, getHeadRadius(s.hp));
-      this.graphics.fillStyle(s.accent, 1).fillCircle(s.x + Math.cos(s.angle) * 8, s.y + Math.sin(s.angle) * 8, 4);
-      this.graphics.lineStyle(2, s.buffs.shield ? 0x8be9fd : s.accent, 0.75).strokeCircle(s.x, s.y, getHeadRadius(s.hp) + (s.dashTime > 0 ? 12 : 5));
-    }
+    this.drawArena(b);
+    this.drawPickups();
+    this.drawMines();
+    this.drawRockets();
+    this.drawParticles();
+    this.drawSnakes();
+    this.drawDamageIndicators();
     this.drawRadar(b);
     this.drawHud();
   }
 
   private drawBackdrop() {
-    this.graphics.fillGradientStyle(0x07101f, 0x101832, 0x180b2d, 0x07101f, 1).fillRect(0, 0, WORLD.width, WORLD.height);
+    this.graphics.fillGradientStyle(0x030712, 0x0b1730, 0x21103f, 0x050816, 1).fillRect(0, 0, WORLD.width, WORLD.height);
+    for (let i = 0; i < 90; i++) {
+      const star = getOlympusStar(i);
+      this.graphics.fillStyle(i % 7 === 0 ? 0xffd166 : 0x9bdcff, star.alpha).fillCircle(star.x * WORLD.width, star.y * WORLD.height, star.size);
+    }
+    this.graphics.lineStyle(2, 0x1b335f, 0.18);
+    for (let x = -WORLD.height; x <= WORLD.width; x += 210) this.graphics.lineBetween(x, 0, x + WORLD.height, WORLD.height);
+    this.graphics.lineStyle(1, 0x6f52ff, 0.1);
+    for (let y = 80; y <= WORLD.height; y += 160) this.graphics.lineBetween(0, y, WORLD.width, y + Math.sin(y * 0.01) * 70);
+    this.graphics.fillStyle(0xffd166, 0.05).fillCircle(WORLD.width * 0.5, WORLD.height * 0.48, 520);
+    this.graphics.lineStyle(3, 0xffd166, 0.09).strokeCircle(WORLD.width * 0.5, WORLD.height * 0.48, 570);
+  }
+
+  private drawArena(bounds: ReturnType<typeof getArenaBounds>) {
+    this.graphics.fillStyle(0x050914, 0.28).fillRoundedRect(bounds.left, bounds.top, bounds.width, bounds.height, 24);
+    this.graphics.lineStyle(18, 0x8be9fd, 0.12).strokeRoundedRect(bounds.left - 7, bounds.top - 7, bounds.width + 14, bounds.height + 14, 32);
+    this.graphics.lineStyle(8, 0xffd166, 0.45).strokeRoundedRect(bounds.left, bounds.top, bounds.width, bounds.height, 24);
+    this.graphics.lineStyle(2, 0xffffff, 0.42).strokeRoundedRect(bounds.left + 7, bounds.top + 7, bounds.width - 14, bounds.height - 14, 18);
+    this.graphics.lineStyle(1, 0x2d426e, 0.32);
+    for (let x = Math.ceil(bounds.left / 130) * 130; x <= bounds.right; x += 130) this.graphics.lineBetween(x, bounds.top, x, bounds.bottom);
+    for (let y = Math.ceil(bounds.top / 130) * 130; y <= bounds.bottom; y += 130) this.graphics.lineBetween(bounds.left, y, bounds.right, y);
+    this.graphics.lineStyle(2, 0xffd166, 0.12).strokeCircle(bounds.centerX, bounds.centerY, Math.min(bounds.width, bounds.height) * 0.22);
+    this.graphics.lineStyle(2, 0x8be9fd, 0.1).strokeCircle(bounds.centerX, bounds.centerY, Math.min(bounds.width, bounds.height) * 0.36);
+  }
+
+  private drawPickups() {
+    this.pickups.forEach((p) => {
+      const isUpgrade = p.kind === 'upgrade';
+      const pulse = 1 + Math.sin(this.elapsed * 5 + p.id) * 0.08;
+      const radius = (isUpgrade ? 18 : 11) * pulse;
+      const color = isUpgrade ? 0xffd166 : 0x50fa7b;
+      this.graphics.fillStyle(color, 0.16).fillCircle(p.x, p.y, radius + 18);
+      this.graphics.lineStyle(3, color, 0.7).strokeCircle(p.x, p.y, radius + 6);
+      if (isUpgrade) {
+        this.graphics.fillStyle(0x11162a, 0.9).fillCircle(p.x, p.y, radius);
+        this.graphics.lineStyle(3, color, 0.95).strokeCircle(p.x, p.y, radius);
+        this.graphics.lineStyle(3, 0xffffff, 0.6).lineBetween(p.x - radius * 0.55, p.y, p.x + radius * 0.55, p.y);
+        this.graphics.lineStyle(3, 0xffffff, 0.6).lineBetween(p.x, p.y - radius * 0.55, p.x, p.y + radius * 0.55);
+      } else {
+        this.graphics.fillStyle(0x12351f, 0.85).fillCircle(p.x, p.y, radius + 2);
+        this.graphics.fillStyle(color, 0.95).fillCircle(p.x, p.y, radius);
+        this.graphics.fillStyle(0xffffff, 0.35).fillCircle(p.x - radius * 0.35, p.y - radius * 0.3, radius * 0.28);
+      }
+    });
+  }
+
+  private drawMines() {
+    this.mines.forEach((m) => {
+      const armed = m.armed > 0.65;
+      const pulse = armed ? 1 + Math.sin(this.elapsed * 12) * 0.18 : 1;
+      this.graphics.fillStyle(0xff3157, armed ? 0.16 : 0.05).fillCircle(m.x, m.y, (BALANCE.landmineRadius + 22) * pulse);
+      this.graphics.lineStyle(2, armed ? 0xff3157 : 0x865050, armed ? 0.85 : 0.45).strokeCircle(m.x, m.y, BALANCE.landmineRadius + 10);
+      this.graphics.fillStyle(0x190912, 0.95).fillCircle(m.x, m.y, BALANCE.landmineRadius);
+      this.graphics.lineStyle(3, armed ? 0xffd166 : 0x865050, 0.9).lineBetween(m.x - 11, m.y, m.x + 11, m.y);
+      this.graphics.lineStyle(3, armed ? 0xffd166 : 0x865050, 0.9).lineBetween(m.x, m.y - 11, m.x, m.y + 11);
+    });
+  }
+
+  private drawRockets() {
+    this.rockets.forEach((r) => {
+      this.graphics.lineStyle(12, r.color, 0.14).lineBetween(r.x - r.vx * 0.055, r.y - r.vy * 0.055, r.x, r.y);
+      this.graphics.lineStyle(5, r.color, 0.85).lineBetween(r.x - r.vx * 0.035, r.y - r.vy * 0.035, r.x, r.y);
+      this.graphics.fillStyle(0xffffff, 1).fillCircle(r.x, r.y, BALANCE.rocketRadius + 1);
+      this.graphics.fillStyle(r.color, 1).fillCircle(r.x, r.y, BALANCE.rocketRadius - 2);
+    });
+  }
+
+  private drawParticles() {
+    this.particles.forEach((p) => {
+      this.graphics.fillStyle(p.color, p.alpha * 0.55).fillCircle(p.x, p.y, p.size + 3);
+      this.graphics.fillStyle(p.color, p.alpha).fillCircle(p.x, p.y, p.size);
+    });
+  }
+
+  private drawSnakes() {
+    for (const s of this.snakes) {
+      if (!s.alive) continue;
+      const body = s.body.length ? s.body : [s];
+      for (let i = body.length - 1; i >= 0; i--) {
+        const seg = body[i];
+        const style = getSnakeSegmentStyle({ index: i, total: body.length, hp: s.hp, color: s.color, accent: s.accent, dashTime: s.dashTime, shielded: Boolean(s.buffs.shield) });
+        this.graphics.fillStyle(style.bodyColor, style.glowAlpha * 0.38).fillCircle(seg.x, seg.y, style.glowRadius);
+        this.graphics.fillStyle(style.bodyColor, 0.9).fillCircle(seg.x, seg.y, style.radius);
+        this.graphics.lineStyle(Math.max(1.5, style.radius * 0.16), 0xffffff, 0.22).strokeCircle(seg.x, seg.y, style.radius * 0.86);
+        if (style.hasScalePlate) {
+          this.graphics.fillStyle(style.innerColor, style.plateAlpha).fillCircle(seg.x, seg.y, Math.max(2, style.radius * 0.28));
+        }
+      }
+      const radius = getHeadRadius(s.hp);
+      const noseX = s.x + Math.cos(s.angle) * radius * 0.72;
+      const noseY = s.y + Math.sin(s.angle) * radius * 0.72;
+      const leftEye = s.angle - 0.58;
+      const rightEye = s.angle + 0.58;
+      this.graphics.lineStyle(3, s.buffs.shield ? 0x8be9fd : s.accent, 0.82).strokeCircle(s.x, s.y, radius + (s.dashTime > 0 ? 15 : 7));
+      this.graphics.fillStyle(0xffffff, 0.92).fillCircle(s.x + Math.cos(leftEye) * radius * 0.42, s.y + Math.sin(leftEye) * radius * 0.42, Math.max(2.6, radius * 0.15));
+      this.graphics.fillStyle(0xffffff, 0.92).fillCircle(s.x + Math.cos(rightEye) * radius * 0.42, s.y + Math.sin(rightEye) * radius * 0.42, Math.max(2.6, radius * 0.15));
+      this.graphics.fillStyle(0x07101f, 0.96).fillCircle(noseX, noseY, Math.max(2, radius * 0.12));
+      this.graphics.lineStyle(2, s.accent, 0.85).lineBetween(noseX, noseY, noseX + Math.cos(s.angle - 0.26) * 16, noseY + Math.sin(s.angle - 0.26) * 16);
+      this.graphics.lineStyle(2, s.accent, 0.85).lineBetween(noseX, noseY, noseX + Math.cos(s.angle + 0.26) * 16, noseY + Math.sin(s.angle + 0.26) * 16);
+    }
+  }
+
+  private drawDamageIndicators() {
+    this.clearFloatingText();
+    this.damageIndicators.forEach((indicator) => {
+      const size = 15 * indicator.scale;
+      this.graphics.lineStyle(4, 0x07101f, indicator.alpha * 0.8).strokeRoundedRect(indicator.x - size * 0.95, indicator.y - size * 0.7, size * 1.9, size * 1.08, 8);
+      this.graphics.fillStyle(0x07101f, indicator.alpha * 0.46).fillRoundedRect(indicator.x - size * 0.95, indicator.y - size * 0.7, size * 1.9, size * 1.08, 8);
+      this.graphics.lineStyle(2, indicator.color, indicator.alpha).strokeRoundedRect(indicator.x - size * 0.95, indicator.y - size * 0.7, size * 1.9, size * 1.08, 8);
+    });
+    const camera = this.cameras.main;
+    const zoom = camera.zoom || 1;
+    this.damageIndicators.forEach((indicator, index) => {
+      let text = this.floatingTextObjects[index];
+      if (!text) {
+        text = this.add.text(indicator.x, indicator.y, '', {
+          fontFamily: 'Arial Black, Arial',
+          stroke: '#040812',
+          strokeThickness: 5,
+        }).setOrigin(0.5).setDepth(25);
+        this.floatingTextObjects[index] = text;
+      }
+      text
+        .setText(indicator.text)
+        .setPosition(indicator.x, indicator.y)
+        .setFontSize(Math.round(17 * indicator.scale))
+        .setColor(Phaser.Display.Color.IntegerToColor(indicator.color).rgba)
+        .setAlpha(indicator.alpha)
+        .setScale(1 / zoom)
+        .setVisible(true);
+    });
+    for (let i = this.damageIndicators.length; i < this.floatingTextObjects.length; i++) this.floatingTextObjects[i].setVisible(false);
+  }
+
+  private clearFloatingText() {
+    this.floatingTextObjects.forEach((text) => text.setVisible(false));
+  }
+
+  private cleanupSceneObjects() {
+    this.floatingTextObjects.forEach((text) => text.destroy());
+    this.floatingTextObjects = [];
+    if (this.audioEngine?.context.state !== 'closed') void this.audioEngine?.context.close();
+    this.audioEngine = undefined;
   }
 
   private drawRadar(bounds: ReturnType<typeof getArenaBounds>) {
