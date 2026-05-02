@@ -46,6 +46,7 @@ export class MatchScene extends Phaser.Scene {
   private feedText!: Phaser.GameObjects.Text;
   private overlay!: Phaser.GameObjects.Text;
   private title!: Phaser.GameObjects.Text;
+  private menuBackground?: Phaser.GameObjects.Image;
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
   private matchState: 'menu' | 'active' | 'paused' | 'complete' = 'menu';
   private elapsed = 0;
@@ -61,6 +62,10 @@ export class MatchScene extends Phaser.Scene {
     super('MatchScene');
   }
 
+  preload() {
+    this.load.image('start-screen', '/assets/start-screen.png');
+  }
+
   create() {
     const storage = getSafeStorage(window);
     this.settings = safeJsonRead(storage, 'soo:settings', DEFAULT_SETTINGS);
@@ -69,6 +74,7 @@ export class MatchScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor('#07101f');
     this.cameras.main.setBounds(0, 0, WORLD.width, WORLD.height);
     this.graphics = this.add.graphics();
+    this.menuBackground = this.add.image(this.scale.width / 2, this.scale.height / 2, 'start-screen').setOrigin(0.5).setScrollFactor(0).setDepth(1);
     this.hud = this.add.text(16, 12, '', { fontFamily: 'monospace', fontSize: '15px', color: '#dff7ff', lineSpacing: 4 }).setScrollFactor(0).setDepth(20);
     this.leaderboardText = this.add.text(0, 0, '', { fontFamily: 'monospace', fontSize: '14px', color: '#eefaff', lineSpacing: 6 }).setScrollFactor(0).setDepth(22);
     this.feedText = this.add.text(16, 0, '', { fontFamily: 'monospace', fontSize: '13px', color: '#cde8ff', lineSpacing: 5 }).setScrollFactor(0).setDepth(22);
@@ -520,21 +526,16 @@ export class MatchScene extends Phaser.Scene {
   private drawMenu() {
     this.graphics.clear();
     this.clearFloatingText();
-    this.drawBackdrop();
-    this.title.setPosition(this.scale.width / 2, this.scale.height / 2 - 150).setText('SNAKE\nOF OLYMPUS').setFontSize(54);
-    const cx = this.scale.width / 2;
-    const cy = this.scale.height / 2;
-    this.graphics.fillStyle(0x06101f, 0.72).fillRoundedRect(cx - 250, cy - 36, 500, 150, 22);
-    this.graphics.lineStyle(3, 0xffd166, 0.85).strokeRoundedRect(cx - 250, cy - 36, 500, 150, 22);
-    this.graphics.fillStyle(0xffd166, 0.14).fillRoundedRect(cx - 172, cy - 3, 344, 58, 18);
-    this.graphics.lineStyle(2, 0xffd166, 0.9).strokeRoundedRect(cx - 172, cy - 3, 344, 58, 18);
-    this.overlay.setPosition(cx, cy + 26).setText('SPACE TO START\n\nA/D Turn   W Boost\nF Dash     Space Fire').setFontSize(22);
+    this.fitMenuBackground();
+    this.title.setText('');
+    this.overlay.setText('');
     this.hud.setText('');
     this.leaderboardText.setText('');
     this.feedText.setText('');
   }
 
   private drawWorld() {
+    this.menuBackground?.setVisible(false);
     this.title.setText('');
     this.graphics.clear();
     this.clearFloatingText();
@@ -549,6 +550,16 @@ export class MatchScene extends Phaser.Scene {
     this.drawDamageIndicators();
     this.drawRadar(b);
     this.drawHud();
+  }
+
+  private fitMenuBackground() {
+    const background = this.menuBackground;
+    if (!background) return;
+    const scale = Math.max(this.scale.width / background.width, this.scale.height / background.height);
+    background
+      .setVisible(true)
+      .setPosition(this.scale.width / 2, this.scale.height / 2)
+      .setScale(scale);
   }
 
   private drawBackdrop() {
