@@ -3,7 +3,7 @@ import { BALANCE, BUFF_WEIGHTS, WORLD } from '../config/balance';
 import { SNAKE_ROSTER } from '../data/snakeRoster';
 import type { BuffKind, PickupKind, SnakeRuntime } from '../core/types';
 import { Rng } from '../core/rng';
-import { angleTo, distance, distanceSq, turnToward, wrapAngle } from '../core/math';
+import { angleTo, distanceSq, turnToward, wrapAngle } from '../core/math';
 import { getArenaBounds, getContinuousArenaScale, clampToArena } from '../systems/arenaSystem';
 import { applyDamage, applyHealing, getHeadRadius, getSegmentCount } from '../entities/snakeMath';
 import { scoreSnake, sortLeaderboard } from '../systems/scoringSystem';
@@ -27,6 +27,7 @@ type Feed = { text: string; life: number };
 type Settings = { shake: boolean; damageNumbers: boolean; masterVolume: number; sfxVolume: number };
 type Particle = { x: number; y: number; vx: number; vy: number; life: number; maxLife: number; color: number; size: number; alpha: number };
 type AudioEngine = { context: AudioContext; gain: GainNode };
+type ViewBounds = { left: number; right: number; top: number; bottom: number };
 
 const DEFAULT_SETTINGS: Settings = { shake: true, damageNumbers: true, masterVolume: 0.7, sfxVolume: 0.8 };
 
@@ -40,7 +41,9 @@ export class MatchScene extends Phaser.Scene {
   private damageIndicators: DamageIndicator[] = [];
   private floatingTextObjects: Phaser.GameObjects.Text[] = [];
   private feed: Feed[] = [];
+  private staticGraphics!: Phaser.GameObjects.Graphics;
   private graphics!: Phaser.GameObjects.Graphics;
+
   private hud!: Phaser.GameObjects.Text;
   private leaderboardText!: Phaser.GameObjects.Text;
   private feedText!: Phaser.GameObjects.Text;
@@ -57,6 +60,13 @@ export class MatchScene extends Phaser.Scene {
   private audioEvents = createAudioEventQueue(DEFAULT_SETTINGS);
   private audioEngine?: AudioEngine;
   private bestScore = 0;
+  private menuDirty = true;
+  private lastViewportWidth = 0;
+  private lastViewportHeight = 0;
+  private lastHudText = '';
+  private lastLeaderboardText = '';
+  private lastFeedText = '';
+  private colorCache = new Map<number, string>();
 
   constructor() {
     super('MatchScene');
@@ -73,8 +83,11 @@ export class MatchScene extends Phaser.Scene {
     this.bestScore = safeJsonRead(storage, 'soo:bestScore', 0);
     this.cameras.main.setBackgroundColor('#120b18');
     this.cameras.main.setBounds(0, 0, WORLD.width, WORLD.height);
-    this.graphics = this.add.graphics();
-    this.menuBackground = this.add.image(this.scale.width / 2, this.scale.height / 2, 'start-screen').setOrigin(0.5).setScrollFactor(0).setDepth(1);
+    this.staticGraphics = this.add.graphics().setDepth(0);
+    this.graphics = this.add.graphics().setDepth(5);
+    this.drawStaticBackdrop();
+    this.cacheStaticBackdrop();
+    this.menuBackground = this.add.image(this.scale.width / 2, this.scale.height / 2, 'start-screen').setOrigin(0.5).setScrollFactor(0).setDepth(10);
     this.hud = this.add.text(16, 12, '', { fontFamily: 'Georgia, Times New Roman, serif', fontSize: '15px', color: '#fff4d6', lineSpacing: 5, stroke: '#180b24', strokeThickness: 3 }).setScrollFactor(0).setDepth(20);
     this.leaderboardText = this.add.text(0, 0, '', { fontFamily: 'Courier New, ui-monospace, monospace', fontSize: '16px', color: '#fff8e8', lineSpacing: 7, stroke: '#180b24', strokeThickness: 2 }).setScrollFactor(0).setDepth(22);
     this.feedText = this.add.text(16, 0, '', { fontFamily: 'Georgia, Times New Roman, serif', fontSize: '13px', color: '#f3d48b', lineSpacing: 6, stroke: '#160812', strokeThickness: 2 }).setScrollFactor(0).setDepth(22);
@@ -89,6 +102,7 @@ export class MatchScene extends Phaser.Scene {
     keyboard.on('keydown-M', () => this.toggleMute());
     keyboard.on('keydown-N', () => this.toggleDamageNumbers());
     window.addEventListener('blur', () => { if (this.matchState === 'active') this.matchState = 'paused'; });
+    this.scale.on(Phaser.Scale.Events.RESIZE, () => { this.menuDirty = true; });
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.cleanupSceneObjects());
     this.drawMenu();
   }
@@ -127,6 +141,9 @@ export class MatchScene extends Phaser.Scene {
       return snake;
     });
     this.maintainPickups();
+    this.lastHudText = '';
+    this.lastLeaderboardText = '';
+    this.lastFeedText = '';
     this.overlay.setText('');
     this.title.setText('');
   }
@@ -134,7 +151,10 @@ export class MatchScene extends Phaser.Scene {
   update(_: number, deltaMs: number) {
     const dt = Math.min(deltaMs / 1000, 0.05);
     this.updateHudSize();
-    if (this.matchState === 'menu') { this.drawMenu(); return; }
+    if (this.matchState === 'menu') {
+      if (this.menuDirty || this.scale.width !== this.lastViewportWidth || this.scale.height !== this.lastViewportHeight) this.drawMenu();
+      return;
+    }
     if (this.matchState === 'paused') { this.drawWorld(); this.drawOverlay('PAUSED\nP/Esc resume · R restart\nA/D turn · W boost · Space rockets · Hold F dash'); return; }
     if (this.matchState === 'complete') { this.drawWorld(); return; }
     this.elapsed += dt;
@@ -227,29 +247,60 @@ export class MatchScene extends Phaser.Scene {
       const bounds = getArenaBounds(this.arenaScale);
       const nearWall = s.x < bounds.left + BALANCE.aiNearWallMargin || s.x > bounds.right - BALANCE.aiNearWallMargin || s.y < bounds.top + BALANCE.aiNearWallMargin || s.y > bounds.bottom - BALANCE.aiNearWallMargin;
       const lowHp = s.hp < 18;
-      const fruit = this.pickups.filter((p) => lowHp ? p.kind === 'fruit' : true).sort((a, b) => distanceSq(s, a) - distanceSq(s, b))[0];
-      const enemy = this.snakes.filter((o) => o.alive && o.id !== s.id).sort((a, b) => a.hp - b.hp || distanceSq(s, a) - distanceSq(s, b))[0];
-      const mine = this.mines.find((m) => distance(s, m) < BALANCE.aiMineAvoidanceRadius);
-      const bodyThreat = this.snakes
-        .filter((o) => o.alive && o.id !== s.id)
-        .flatMap((o) => o.body.slice(8).map((seg) => ({ ...seg, ownerHp: o.hp })))
-        .filter((seg) => distance(s, seg) < 105)
-        .sort((a, b) => distanceSq(s, a) - distanceSq(s, b))[0];
+      let fruit: Pickup | undefined;
+      let fruitDistSq = Number.POSITIVE_INFINITY;
+      for (const p of this.pickups) {
+        if (lowHp && p.kind !== 'fruit') continue;
+        const dSq = distanceSq(s, p);
+        if (dSq < fruitDistSq) { fruit = p; fruitDistSq = dSq; }
+      }
+
+      let enemy: SnakeRuntime | undefined;
+      let enemyDistSq = Number.POSITIVE_INFINITY;
+      for (const other of this.snakes) {
+        if (!other.alive || other.id === s.id) continue;
+        const dSq = distanceSq(s, other);
+        if (!enemy || other.hp < enemy.hp || (other.hp === enemy.hp && dSq < enemyDistSq)) {
+          enemy = other;
+          enemyDistSq = dSq;
+        }
+      }
+
+      const mineAvoidanceSq = BALANCE.aiMineAvoidanceRadius * BALANCE.aiMineAvoidanceRadius;
+      const mine = this.mines.find((m) => distanceSq(s, m) < mineAvoidanceSq);
+      const bodyThreat = this.findBodyThreat(s, 105);
       if (nearWall) s.targetAngle = angleTo(s.x, s.y, bounds.centerX, bounds.centerY);
       else if (mine) s.targetAngle = angleTo(mine.x, mine.y, s.x, s.y);
       else if (bodyThreat) s.targetAngle = angleTo(bodyThreat.x, bodyThreat.y, s.x, s.y);
       else if (fruit && (lowHp || this.rng.next() < 0.55)) s.targetAngle = angleTo(s.x, s.y, fruit.x, fruit.y);
       else if (enemy) s.targetAngle = angleTo(s.x, s.y, enemy.x, enemy.y);
       if (enemy) {
-        const d = distance(s, enemy);
         const delta = Math.abs(wrapAngle(angleTo(s.x, s.y, enemy.x, enemy.y) - s.angle));
-        if (d < BALANCE.aiFireRange && delta < BALANCE.aiFireAngleGate && s.cooldowns.rocket <= 0) this.fireRocket(s);
-        if (d < BALANCE.aiChargeRange && delta < BALANCE.aiChargeAngleGate && s.cooldowns.charge <= 0 && s.hp > BALANCE.minChargeHp) {
+        if (enemyDistSq < BALANCE.aiFireRange * BALANCE.aiFireRange && delta < BALANCE.aiFireAngleGate && s.cooldowns.rocket <= 0) this.fireRocket(s);
+        if (enemyDistSq < BALANCE.aiChargeRange * BALANCE.aiChargeRange && delta < BALANCE.aiChargeAngleGate && s.cooldowns.charge <= 0 && s.hp > BALANCE.minChargeHp) {
           s.dashTime = BALANCE.chargeDashDuration; s.cooldowns.charge = BALANCE.chargeCooldown; this.emitAudio('dash-launch', 0.45);
         }
       }
     }
     s.angle = turnToward(s.angle, s.targetAngle, BALANCE.turnRate * dt);
+  }
+
+  private findBodyThreat(snake: SnakeRuntime, radius: number) {
+    const radiusSq = radius * radius;
+    let threat: { x: number; y: number } | undefined;
+    let threatDistanceSq = Number.POSITIVE_INFINITY;
+    for (const other of this.snakes) {
+      if (!other.alive || other.id === snake.id) continue;
+      for (let i = 8; i < other.body.length; i++) {
+        const segment = other.body[i];
+        const dSq = distanceSq(snake, segment);
+        if (dSq < radiusSq && dSq < threatDistanceSq) {
+          threat = segment;
+          threatDistanceSq = dSq;
+        }
+      }
+    }
+    return threat;
   }
 
   private fireRocket(owner: SnakeRuntime) {
@@ -270,12 +321,15 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private updatePickups() {
-    for (const s of this.snakes.filter((x) => x.alive)) {
-      for (const p of [...this.pickups]) {
-        if (distance(s, p) < getHeadRadius(s.hp) + (p.kind === 'upgrade' ? BALANCE.powerupFruitRadius : 12)) {
+    for (const s of this.snakes) {
+      if (!s.alive) continue;
+      for (let i = this.pickups.length - 1; i >= 0; i--) {
+        const p = this.pickups[i];
+        const radius = getHeadRadius(s.hp) + (p.kind === 'upgrade' ? BALANCE.powerupFruitRadius : 12);
+        if (distanceSq(s, p) < radius * radius) {
           s.hp = applyHealing(s.hp, p.value); s.fruits += 1;
           if (p.buff) s.buffs[p.buff] = p.buff === 'speed' ? BALANCE.speedFruitDuration : p.buff === 'triple' ? BALANCE.tripleFruitDuration : BALANCE.shieldFruitDuration;
-          this.pickups = this.pickups.filter((x) => x.id !== p.id);
+          this.pickups.splice(i, 1);
           this.emitAudio(p.kind === 'upgrade' ? 'upgrade-pickup' : 'fruit-pickup', s.isPlayer ? 1 : 0.4);
           this.feedLine(`${s.name} claimed ${p.buff ?? 'fruit'}`);
         }
@@ -284,7 +338,8 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private updateMines(dt: number) {
-    const alive = this.snakes.filter((s) => s.alive).length;
+    let alive = 0;
+    for (const s of this.snakes) if (s.alive) alive += 1;
     this.mines.forEach((m) => { m.armed += dt; m.cooldown = Math.max(0, m.cooldown - dt); });
     if (alive <= BALANCE.landmineActivationAliveCount) {
       this.nextMine -= dt;
@@ -302,12 +357,10 @@ export class MatchScene extends Phaser.Scene {
     }
     for (const mine of this.mines) {
       if (mine.armed < 0.65 || mine.cooldown > 0) continue;
-      const victim = this.snakes.find((s) => s.alive && (
-        distance(s, mine) < getHeadRadius(s.hp) + BALANCE.landmineRadius ||
-        s.body.slice(5).some((seg) => distance(seg, mine) < 8 + BALANCE.landmineRadius)
-      ));
+      const victim = this.snakes.find((s) => s.alive && this.mineHitsSnake(mine, s));
       if (victim) {
-        const bodyHit = distance(victim, mine) >= getHeadRadius(victim.hp) + BALANCE.landmineRadius;
+        const headRadius = getHeadRadius(victim.hp) + BALANCE.landmineRadius;
+        const bodyHit = distanceSq(victim, mine) >= headRadius * headRadius;
         this.hurt(victim, bodyHit ? BALANCE.landmineBodyDamage : BALANCE.landmineDamage, undefined, 'mine');
         this.emitAudio('mine-trigger');
         mine.cooldown = BALANCE.landmineTriggerCooldown;
@@ -316,27 +369,44 @@ export class MatchScene extends Phaser.Scene {
     }
   }
 
+  private mineHitsSnake(mine: Mine, snake: SnakeRuntime) {
+    const headRadius = getHeadRadius(snake.hp) + BALANCE.landmineRadius;
+    if (distanceSq(snake, mine) < headRadius * headRadius) return true;
+    const bodyRadius = 8 + BALANCE.landmineRadius;
+    const bodyRadiusSq = bodyRadius * bodyRadius;
+    for (let i = 5; i < snake.body.length; i++) {
+      if (distanceSq(snake.body[i], mine) < bodyRadiusSq) return true;
+    }
+    return false;
+  }
+
   private resolveCollisions() {
-    for (const r of [...this.rockets]) {
+    for (let i = this.rockets.length - 1; i >= 0; i--) {
+      const r = this.rockets[i];
       for (const s of this.snakes) {
         if (!s.alive || s.id === r.ownerId) continue;
-        const headHit = distance(s, r) < getHeadRadius(s.hp) + BALANCE.rocketRadius;
-        const bodyHit = !headHit && s.body.slice(5).some((seg) => distance(seg, r) < 12 + BALANCE.rocketRadius);
+        const headRadius = getHeadRadius(s.hp) + BALANCE.rocketRadius;
+        const headHit = distanceSq(s, r) < headRadius * headRadius;
+        const bodyHit = !headHit && this.bodyHitsPoint(s.body, r, 5, 12 + BALANCE.rocketRadius);
         if (headHit || bodyHit) {
           const owner = this.snakes.find((x) => x.id === r.ownerId);
           this.hurt(s, BALANCE.rocketDamage * (headHit ? BALANCE.rocketHeadMultiplier : 1), owner, 'rocket');
           this.emitAudio('rocket-impact', owner?.isPlayer ? 1 : 0.45);
-          this.rockets = this.rockets.filter((x) => x !== r);
+          this.rockets.splice(i, 1);
           break;
         }
       }
     }
-    for (const a of this.snakes.filter((s) => s.alive)) {
-      for (const b of this.snakes.filter((s) => s.alive && s.id !== a.id)) {
-        if (distance(a, b) < getHeadRadius(a.hp) + getHeadRadius(b.hp) && a.cooldowns.head <= 0) {
+    for (const a of this.snakes) {
+      if (!a.alive) continue;
+      const aHeadRadius = getHeadRadius(a.hp);
+      for (const b of this.snakes) {
+        if (!b.alive || b.id === a.id) continue;
+        const headRadius = aHeadRadius + getHeadRadius(b.hp);
+        if (distanceSq(a, b) < headRadius * headRadius && a.cooldowns.head <= 0) {
           this.hurt(a, BALANCE.headCrashDamage, undefined, 'crash'); a.cooldowns.head = BALANCE.headCrashCooldown;
         }
-        if (a.cooldowns.body <= 0 && b.body.slice(8).some((seg) => distance(a, seg) < getHeadRadius(a.hp) + 8)) {
+        if (a.cooldowns.body <= 0 && this.bodyHitsPoint(b.body, a, 8, aHeadRadius + 8)) {
           const dmg = a.dashTime > 0 ? BALANCE.chargeDamage : BALANCE.bodyCrashDamage;
           this.hurt(a, dmg, b, 'body');
           if (a.dashTime > 0) this.hurt(b, BALANCE.chargeDamage * 0.45, a, 'fang');
@@ -344,6 +414,14 @@ export class MatchScene extends Phaser.Scene {
         }
       }
     }
+  }
+
+  private bodyHitsPoint(body: { x: number; y: number }[], point: { x: number; y: number }, startIndex: number, radius: number) {
+    const radiusSq = radius * radius;
+    for (let i = startIndex; i < body.length; i++) {
+      if (distanceSq(body[i], point) < radiusSq) return true;
+    }
+    return false;
   }
 
   private hurt(target: SnakeRuntime, amount: number, attacker?: SnakeRuntime, source = 'damage') {
@@ -378,14 +456,18 @@ export class MatchScene extends Phaser.Scene {
 
   private updateVisualEffects(dt: number) {
     this.damageIndicators = updateDamageIndicators(this.damageIndicators, dt);
-    this.particles = this.particles
-      .map((p) => {
-        const life = p.life - dt;
-        const t = Math.max(0, life / p.maxLife);
-        return { ...p, x: p.x + p.vx * dt, y: p.y + p.vy * dt, vy: p.vy + 10 * dt, life, alpha: t };
-      })
-      .filter((p) => p.life > 0)
-      .slice(-260);
+    let writeIndex = 0;
+    for (let i = Math.max(0, this.particles.length - 260); i < this.particles.length; i++) {
+      const p = this.particles[i];
+      p.life -= dt;
+      if (p.life <= 0) continue;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vy += 10 * dt;
+      p.alpha = Math.max(0, p.life / p.maxLife);
+      this.particles[writeIndex++] = p;
+    }
+    this.particles.length = writeIndex;
   }
 
   private spawnTrail(s: SnakeRuntime, intensity = 1) {
@@ -532,21 +614,23 @@ export class MatchScene extends Phaser.Scene {
     this.hud.setText('');
     this.leaderboardText.setText('');
     this.feedText.setText('');
+    this.lastViewportWidth = this.scale.width;
+    this.lastViewportHeight = this.scale.height;
+    this.menuDirty = false;
   }
 
   private drawWorld() {
     this.menuBackground?.setVisible(false);
     this.title.setText('');
     this.graphics.clear();
-    this.clearFloatingText();
-    this.drawBackdrop();
     const b = getArenaBounds(this.arenaScale);
+    const view = this.getWorldView(180);
     this.drawArena(b);
-    this.drawPickups();
-    this.drawMines();
-    this.drawRockets();
-    this.drawParticles();
-    this.drawSnakes();
+    this.drawPickups(view);
+    this.drawMines(view);
+    this.drawRockets(view);
+    this.drawParticles(view);
+    this.drawSnakes(view);
     this.drawDamageIndicators();
     this.drawRadar(b);
     this.drawHud();
@@ -562,47 +646,72 @@ export class MatchScene extends Phaser.Scene {
       .setScale(scale);
   }
 
-  private drawBackdrop() {
-    this.graphics.fillGradientStyle(0x14091f, 0x2c1743, 0x07101f, 0x03040a, 1).fillRect(0, 0, WORLD.width, WORLD.height);
+  private getWorldView(padding = 0): ViewBounds {
+    const camera = this.cameras.main;
+    const zoom = camera.zoom || 1;
+    return {
+      left: camera.scrollX - padding / zoom,
+      right: camera.scrollX + this.scale.width / zoom + padding / zoom,
+      top: camera.scrollY - padding / zoom,
+      bottom: camera.scrollY + this.scale.height / zoom + padding / zoom,
+    };
+  }
 
-    this.graphics.fillStyle(0xffd166, 0.08).fillCircle(WORLD.width * 0.5, WORLD.height * 0.16, 620);
-    this.graphics.fillStyle(0xfff1b8, 0.05).fillCircle(WORLD.width * 0.5, WORLD.height * 0.16, 820);
-    this.graphics.lineStyle(3, 0xffd166, 0.08).strokeCircle(WORLD.width * 0.5, WORLD.height * 0.16, 700);
+  private isInView(point: { x: number; y: number }, radius: number, view: ViewBounds) {
+    return point.x + radius >= view.left && point.x - radius <= view.right && point.y + radius >= view.top && point.y - radius <= view.bottom;
+  }
+
+  private cacheStaticBackdrop() {
+    const key = 'olympus-static-backdrop';
+    this.textures.remove(key);
+    this.staticGraphics.generateTexture(key, WORLD.width, WORLD.height);
+    this.staticGraphics.destroy();
+    this.add.image(0, 0, key).setOrigin(0).setDepth(0);
+  }
+
+  private drawStaticBackdrop() {
+    const graphics = this.staticGraphics;
+    graphics.clear();
+    graphics.fillGradientStyle(0x14091f, 0x2c1743, 0x07101f, 0x03040a, 1).fillRect(0, 0, WORLD.width, WORLD.height);
+
+    graphics.fillStyle(0xffd166, 0.08).fillCircle(WORLD.width * 0.5, WORLD.height * 0.16, 620);
+    graphics.fillStyle(0xfff1b8, 0.05).fillCircle(WORLD.width * 0.5, WORLD.height * 0.16, 820);
+    graphics.lineStyle(3, 0xffd166, 0.08).strokeCircle(WORLD.width * 0.5, WORLD.height * 0.16, 700);
 
     for (let i = 0; i < 110; i++) {
       const star = getOlympusStar(i);
       const divineStar = i % 6 === 0;
-      this.graphics.fillStyle(divineStar ? 0xffd166 : 0xf7e8c8, star.alpha * (divineStar ? 0.9 : 0.55)).fillCircle(star.x * WORLD.width, star.y * WORLD.height, star.size * (divineStar ? 1.25 : 0.85));
+      graphics.fillStyle(divineStar ? 0xffd166 : 0xf7e8c8, star.alpha * (divineStar ? 0.9 : 0.55)).fillCircle(star.x * WORLD.width, star.y * WORLD.height, star.size * (divineStar ? 1.25 : 0.85));
     }
 
-    this.graphics.lineStyle(2, 0xffd166, 0.08);
+    graphics.lineStyle(2, 0xffd166, 0.08);
     for (let i = -8; i <= 8; i++) {
       const x = WORLD.width * 0.5 + i * 150;
-      this.graphics.lineBetween(WORLD.width * 0.5, WORLD.height * 0.08, x, WORLD.height);
+      graphics.lineBetween(WORLD.width * 0.5, WORLD.height * 0.08, x, WORLD.height);
     }
 
-    this.graphics.fillStyle(0x1b1a2c, 0.62).fillTriangle(0, WORLD.height * 0.58, WORLD.width * 0.22, WORLD.height * 0.28, WORLD.width * 0.46, WORLD.height * 0.58);
-    this.graphics.fillTriangle(WORLD.width * 0.32, WORLD.height * 0.6, WORLD.width * 0.58, WORLD.height * 0.32, WORLD.width * 0.86, WORLD.height * 0.6);
-    this.graphics.fillTriangle(WORLD.width * 0.62, WORLD.height * 0.58, WORLD.width * 0.84, WORLD.height * 0.26, WORLD.width, WORLD.height * 0.58);
-    this.graphics.lineStyle(2, 0xfff4d6, 0.12);
-    for (let y = 120; y <= WORLD.height; y += 170) this.graphics.lineBetween(0, y, WORLD.width, y + Math.sin(y * 0.008) * 54);
+    graphics.fillStyle(0x1b1a2c, 0.62).fillTriangle(0, WORLD.height * 0.58, WORLD.width * 0.22, WORLD.height * 0.28, WORLD.width * 0.46, WORLD.height * 0.58);
+    graphics.fillTriangle(WORLD.width * 0.32, WORLD.height * 0.6, WORLD.width * 0.58, WORLD.height * 0.32, WORLD.width * 0.86, WORLD.height * 0.6);
+    graphics.fillTriangle(WORLD.width * 0.62, WORLD.height * 0.58, WORLD.width * 0.84, WORLD.height * 0.26, WORLD.width, WORLD.height * 0.58);
+    graphics.lineStyle(2, 0xfff4d6, 0.12);
+    for (let y = 120; y <= WORLD.height; y += 170) graphics.lineBetween(0, y, WORLD.width, y + Math.sin(y * 0.008) * 54);
 
     const templeY = WORLD.height - 360;
-    this.graphics.fillStyle(0xf7e8c8, 0.08).fillRoundedRect(WORLD.width * 0.5 - 520, templeY + 16, 1040, 230, 18);
-    this.graphics.fillStyle(0xffd166, 0.12).fillTriangle(WORLD.width * 0.5 - 560, templeY + 48, WORLD.width * 0.5, templeY - 70, WORLD.width * 0.5 + 560, templeY + 48);
-    this.graphics.lineStyle(4, 0xffd166, 0.18).lineBetween(WORLD.width * 0.5 - 560, templeY + 48, WORLD.width * 0.5 + 560, templeY + 48);
+    graphics.fillStyle(0xf7e8c8, 0.08).fillRoundedRect(WORLD.width * 0.5 - 520, templeY + 16, 1040, 230, 18);
+    graphics.fillStyle(0xffd166, 0.12).fillTriangle(WORLD.width * 0.5 - 560, templeY + 48, WORLD.width * 0.5, templeY - 70, WORLD.width * 0.5 + 560, templeY + 48);
+    graphics.lineStyle(4, 0xffd166, 0.18).lineBetween(WORLD.width * 0.5 - 560, templeY + 48, WORLD.width * 0.5 + 560, templeY + 48);
     for (let i = 0; i < 9; i++) {
       const x = WORLD.width * 0.5 - 420 + i * 105;
-      this.graphics.fillStyle(0xfff4d6, 0.11).fillRoundedRect(x, templeY + 70, 42, 210, 12);
-      this.graphics.lineStyle(2, 0xffd166, 0.11).lineBetween(x + 12, templeY + 82, x + 12, templeY + 264);
-      this.graphics.lineBetween(x + 30, templeY + 82, x + 30, templeY + 264);
-      this.graphics.fillStyle(0xffd166, 0.11).fillRoundedRect(x - 12, templeY + 56, 66, 18, 7);
-      this.graphics.fillRoundedRect(x - 14, templeY + 268, 70, 18, 7);
+      graphics.fillStyle(0xfff4d6, 0.11).fillRoundedRect(x, templeY + 70, 42, 210, 12);
+      graphics.lineStyle(2, 0xffd166, 0.11).lineBetween(x + 12, templeY + 82, x + 12, templeY + 264);
+      graphics.lineBetween(x + 30, templeY + 82, x + 30, templeY + 264);
+      graphics.fillStyle(0xffd166, 0.11).fillRoundedRect(x - 12, templeY + 56, 66, 18, 7);
+      graphics.fillRoundedRect(x - 14, templeY + 268, 70, 18, 7);
     }
 
-    this.graphics.fillStyle(0xffd166, 0.045).fillCircle(WORLD.width * 0.5, WORLD.height * 0.48, 560);
-    this.graphics.lineStyle(3, 0xffd166, 0.12).strokeCircle(WORLD.width * 0.5, WORLD.height * 0.48, 570);
-    this.graphics.lineStyle(2, 0xffffff, 0.08).strokeCircle(WORLD.width * 0.5, WORLD.height * 0.48, 410);
+    graphics.fillStyle(0xffd166, 0.045).fillCircle(WORLD.width * 0.5, WORLD.height * 0.48, 560);
+    graphics.lineStyle(3, 0xffd166, 0.12).strokeCircle(WORLD.width * 0.5, WORLD.height * 0.48, 570);
+    graphics.lineStyle(2, 0xffffff, 0.08).strokeCircle(WORLD.width * 0.5, WORLD.height * 0.48, 410);
   }
 
   private drawArena(bounds: ReturnType<typeof getArenaBounds>) {
@@ -625,12 +734,13 @@ export class MatchScene extends Phaser.Scene {
     }
   }
 
-  private drawPickups() {
+  private drawPickups(view: ViewBounds) {
     this.pickups.forEach((p) => {
       const icon = getPickupIcon(p.kind, p.buff);
       const isUpgrade = p.kind === 'upgrade';
       const pulse = 1 + Math.sin(this.elapsed * 5 + p.id) * 0.08;
       const radius = (isUpgrade ? 20 : 13) * pulse;
+      if (!this.isInView(p, radius + 22, view)) return;
       this.graphics.fillStyle(icon.color, 0.16).fillCircle(p.x, p.y, radius + 18);
       this.graphics.lineStyle(3, icon.color, 0.78).strokeCircle(p.x, p.y, radius + 7);
       this.graphics.fillStyle(isUpgrade ? 0x11162a : 0x12351f, 0.92).fillCircle(p.x, p.y, radius);
@@ -665,8 +775,9 @@ export class MatchScene extends Phaser.Scene {
     }
   }
 
-  private drawMines() {
+  private drawMines(view: ViewBounds) {
     this.mines.forEach((m) => {
+      if (!this.isInView(m, BALANCE.landmineRadius + 42, view)) return;
       const armed = m.armed > 0.65;
       const pulse = armed ? 1 + Math.sin(this.elapsed * 12) * 0.18 : 1;
       this.graphics.fillStyle(0xff3157, armed ? 0.16 : 0.05).fillCircle(m.x, m.y, (BALANCE.landmineRadius + 22) * pulse);
@@ -676,8 +787,9 @@ export class MatchScene extends Phaser.Scene {
     });
   }
 
-  private drawRockets() {
+  private drawRockets(view: ViewBounds) {
     this.rockets.forEach((r) => {
+      if (!this.isInView(r, 70, view)) return;
       this.graphics.lineStyle(12, r.color, 0.14).lineBetween(r.x - r.vx * 0.055, r.y - r.vy * 0.055, r.x, r.y);
       this.graphics.lineStyle(5, r.color, 0.85).lineBetween(r.x - r.vx * 0.035, r.y - r.vy * 0.035, r.x, r.y);
       this.graphics.fillStyle(0xffffff, 1).fillCircle(r.x, r.y, BALANCE.rocketRadius + 1);
@@ -685,19 +797,28 @@ export class MatchScene extends Phaser.Scene {
     });
   }
 
-  private drawParticles() {
+  private drawParticles(view: ViewBounds) {
     this.particles.forEach((p) => {
+      if (!this.isInView(p, p.size + 8, view)) return;
       this.graphics.fillStyle(p.color, p.alpha * 0.55).fillCircle(p.x, p.y, p.size + 3);
       this.graphics.fillStyle(p.color, p.alpha).fillCircle(p.x, p.y, p.size);
     });
   }
 
-  private drawSnakes() {
+  private drawSnakes(view: ViewBounds) {
     for (const s of this.snakes) {
       if (!s.alive) continue;
       const body = s.body.length ? s.body : [s];
+      let anyVisible = this.isInView(s, getHeadRadius(s.hp) + 32, view);
+      if (!anyVisible) {
+        for (const seg of body) {
+          if (this.isInView(seg, getHeadRadius(s.hp) + 22, view)) { anyVisible = true; break; }
+        }
+      }
+      if (!anyVisible) continue;
       for (let i = body.length - 1; i >= 0; i--) {
         const seg = body[i];
+        if (!this.isInView(seg, getHeadRadius(s.hp) + 28, view)) continue;
         const style = getSnakeSegmentStyle({ index: i, total: body.length, hp: s.hp, color: s.color, accent: s.accent, dashTime: s.dashTime, shielded: Boolean(s.buffs.shield) });
         this.graphics.fillStyle(style.bodyColor, style.glowAlpha * 0.38).fillCircle(seg.x, seg.y, style.glowRadius);
         this.graphics.fillStyle(style.bodyColor, 0.9).fillCircle(seg.x, seg.y, style.radius);
@@ -766,7 +887,7 @@ export class MatchScene extends Phaser.Scene {
         .setText(indicator.text)
         .setPosition(indicator.x, indicator.y)
         .setFontSize(Math.round(17 * indicator.scale))
-        .setColor(Phaser.Display.Color.IntegerToColor(indicator.color).rgba)
+        .setColor(this.getColorString(indicator.color))
         .setAlpha(indicator.alpha)
         .setScale(1 / zoom)
         .setVisible(true);
@@ -776,6 +897,15 @@ export class MatchScene extends Phaser.Scene {
 
   private clearFloatingText() {
     this.floatingTextObjects.forEach((text) => text.setVisible(false));
+  }
+
+  private getColorString(color: number) {
+    let cached = this.colorCache.get(color);
+    if (!cached) {
+      cached = Phaser.Display.Color.IntegerToColor(color).rgba;
+      this.colorCache.set(color, cached);
+    }
+    return cached;
   }
 
   private cleanupSceneObjects() {
@@ -806,13 +936,19 @@ export class MatchScene extends Phaser.Scene {
 
   private drawHud() {
     const player = this.snakes.find((s) => s.isPlayer)!;
-    const alive = this.snakes.filter((s) => s.alive).length;
-    const leader = sortLeaderboard(this.snakes)[0];
+    let alive = 0;
+    for (const s of this.snakes) if (s.alive) alive += 1;
+    const leaderboard = sortLeaderboard(this.snakes);
+    const leader = leaderboard[0];
     const spectator = player.alive ? '' : ` · SPECTATING ${leader?.name ?? 'arena'}`;
     const arenaPct = Math.round(this.arenaScale * 100);
     const buffs = Object.entries(player.buffs).map(([k, v]) => `${k.toUpperCase()} ${Math.ceil(v ?? 0)}s`).join('   ') || 'NO BUFF';
-    const hudText = `HP ${Math.round(player.hp)}   K ${player.kills}   SCORE ${player.score}   ALIVE ${alive}/10   ARENA ${arenaPct}%${spectator}\nROCKET ${player.cooldowns.rocket <= 0 ? 'READY' : player.cooldowns.rocket.toFixed(1) + 's'}   FANG ${player.cooldowns.charge <= 0 ? 'READY' : player.cooldowns.charge.toFixed(1) + 's'}   ${buffs}`;
-    this.hud.setText(hudText);
+    const hudText = `HP ${Math.round(player.hp)}   K ${player.kills}   SCORE ${player.score}   ALIVE ${alive}/10   ARENA ${arenaPct}%${spectator}
+ROCKET ${player.cooldowns.rocket <= 0 ? 'READY' : player.cooldowns.rocket.toFixed(1) + 's'}   FANG ${player.cooldowns.charge <= 0 ? 'READY' : player.cooldowns.charge.toFixed(1) + 's'}   ${buffs}`;
+    if (hudText !== this.lastHudText) {
+      this.hud.setText(hudText);
+      this.lastHudText = hudText;
+    }
 
     const camera = this.cameras.main;
     const zoom = camera.zoom || 1;
@@ -824,14 +960,21 @@ export class MatchScene extends Phaser.Scene {
     this.graphics.lineStyle(1 / zoom, 0xfff4d6, 0.36).strokeRoundedRect(hx + 7 / zoom, hy + 7 / zoom, hw - 14 / zoom, 56 / zoom, 12 / zoom);
     this.graphics.fillStyle(0xffd166, 0.2).fillRoundedRect(hx + 12 / zoom, hy + 12 / zoom, hw - 24 / zoom, 20 / zoom, 9 / zoom);
 
-    const top = sortLeaderboard(this.snakes).slice(0, 5);
+    const top = leaderboard.slice(0, 5);
     const icons = ['♛', 'Ⅱ', 'Ⅲ', 'Ⅳ', 'Ⅴ'];
-    this.leaderboardText
-      .setPosition(this.scale.width - 332, 190)
-      .setText(top.map((s, i) => `${icons[i]} ${s.name.padEnd(10).slice(0, 10)} ${s.alive ? '●' : '×'}  KO ${s.kills.toString().padStart(2, ' ')}`).join('\n'));
-    this.feedText
-      .setPosition(16, this.scale.height - 98)
-      .setText(this.feed.slice(-BALANCE.feedRowsShown).map((f) => `› ${f.text}`).join('\n'));
+    const leaderboardText = top.map((s, i) => `${icons[i]} ${s.name.padEnd(10).slice(0, 10)} ${s.alive ? '●' : '×'}  KO ${s.kills.toString().padStart(2, ' ')}`).join('\n');
+    this.leaderboardText.setPosition(this.scale.width - 332, 190);
+    if (leaderboardText !== this.lastLeaderboardText) {
+      this.leaderboardText.setText(leaderboardText);
+      this.lastLeaderboardText = leaderboardText;
+    }
+
+    const feedText = this.feed.slice(-BALANCE.feedRowsShown).map((f) => `› ${f.text}`).join('\n');
+    this.feedText.setPosition(16, this.scale.height - 98);
+    if (feedText !== this.lastFeedText) {
+      this.feedText.setText(feedText);
+      this.lastFeedText = feedText;
+    }
 
     const lx = camera.scrollX + (this.scale.width - 356) / zoom;
     const ly = camera.scrollY + 154 / zoom;

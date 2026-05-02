@@ -48,21 +48,22 @@ export function createDamageIndicator(
 }
 
 export function updateDamageIndicators(indicators: DamageIndicator[], dt: number): DamageIndicator[] {
-  return indicators
-    .map((indicator) => {
-      const life = indicator.life - dt;
-      const t = Math.max(0, life / indicator.maxLife);
-      return {
-        ...indicator,
-        x: indicator.x + indicator.vx * dt,
-        y: indicator.y + indicator.vy * dt,
-        vy: indicator.vy - 12 * dt,
-        life,
-        alpha: Math.min(1, t * 1.25),
-        scale: indicator.scale * (0.992 + 0.018 * t),
-      };
-    })
-    .filter((indicator) => indicator.life > 0);
+  let writeIndex = 0;
+  for (let i = 0; i < indicators.length; i++) {
+    const indicator = indicators[i];
+    indicator.life -= dt;
+    if (indicator.life <= 0) continue;
+
+    const t = Math.max(0, indicator.life / indicator.maxLife);
+    indicator.x += indicator.vx * dt;
+    indicator.y += indicator.vy * dt;
+    indicator.vy -= 12 * dt;
+    indicator.alpha = Math.min(1, t * 1.25);
+    indicator.scale *= 0.992 + 0.018 * t;
+    indicators[writeIndex++] = indicator;
+  }
+  indicators.length = writeIndex;
+  return indicators;
 }
 
 export type SnakeSegmentStyleInput = {

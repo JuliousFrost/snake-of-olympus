@@ -14,7 +14,6 @@ new Phaser.Game({
     width: window.innerWidth,
     height: window.innerHeight,
   },
-  physics: { default: 'arcade' },
   render: {
     antialias: true,
     pixelArt: false,

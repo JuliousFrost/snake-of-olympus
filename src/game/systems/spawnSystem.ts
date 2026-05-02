@@ -1,6 +1,6 @@
 import { BALANCE } from '../config/balance';
 import type { Rect, SnakeRuntime } from '../core/types';
-import { distance } from '../core/math';
+import { distanceSq } from '../core/math';
 
 type Point = { x: number; y: number };
 type MineLike = Point;
@@ -42,10 +42,14 @@ export function chooseSpawnPoint(bounds: Rect, blockedSnakes: SnakeRuntime[], bl
 }
 
 export function isPointSafe(point: Point, snakes: SnakeRuntime[], mines: MineLike[], minDistance: number): boolean {
+  const safeDistanceSq = minDistance * minDistance;
+  const mineSafeDistance = minDistance * 0.7;
+  const mineSafeDistanceSq = mineSafeDistance * mineSafeDistance;
+
   return snakes.every((snake) => !snake.alive || (
-    distance(point, snake) >= minDistance &&
-    snake.body.every((segment) => distance(point, segment) >= minDistance)
-  )) && mines.every((mine) => distance(point, mine) >= minDistance * 0.7);
+    distanceSq(point, snake) >= safeDistanceSq &&
+    snake.body.every((segment) => distanceSq(point, segment) >= safeDistanceSq)
+  )) && mines.every((mine) => distanceSq(point, mine) >= mineSafeDistanceSq);
 }
 
 function fallbackSpawnPoint(bounds: Rect, margin: number, index: number, snakes: SnakeRuntime[], mines: MineLike[], minDistance: number): Point {
