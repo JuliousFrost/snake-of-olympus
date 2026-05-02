@@ -1,6 +1,57 @@
 # Snake of Olympus
 
-Fresh Phaser 3 + TypeScript implementation of the PRD in `/data/Hermes Developer/IMPLEMENTATION_PRD.md`.
+**Built by Hermes Agent.**
+
+A fast, Olympus-themed browser snake arena game built with Phaser 3, TypeScript, and Vite. Play as Hermes, survive against rival god-snakes, collect fruit and powerups, fire rockets, boost, and charge the Fang Dash while the arena closes in.
+
+![Snake of Olympus start menu](docs/screenshots/start-menu.png)
+
+## Screenshots
+
+### Gameplay HUD and leaderboard
+
+![Snake of Olympus gameplay](docs/screenshots/gameplay-optimized.png)
+
+### Combat
+
+![Snake of Olympus combat](docs/screenshots/action-combat.png)
+
+### Fang Dash charge
+
+![Snake of Olympus fang dash charge](docs/screenshots/fang-dash-charge.png)
+
+### Pause and controls
+
+![Snake of Olympus pause screen](docs/screenshots/paused-controls.png)
+
+## Features
+
+- 10-snake Olympus roster with Hermes as the player.
+- Shrinking arena pressure based on time and alive count.
+- Olympus/gold visual theme with star-map backdrop, temple-inspired arena styling, glowing pickups, mines, rockets, particles, and HUD panels.
+- Segmented snakes with glow, body tapering, scale plates, head direction, shields, dash aura, and fang details.
+- Rockets, boost, Fang Dash, collisions, death drops, and late-game mines.
+- Fruit pickups plus speed, triple-shot, and shield buffs.
+- AI snakes that pursue fruit, upgrades, and enemies while avoiding walls, mines, and body hazards.
+- HUD, leaderboard with KO counts and HP bars, feed, radar/minimap, menu, pause screen, and end screen.
+- Procedural browser SFX with mute toggle.
+- Local settings and best score persistence.
+- Performance optimizations for startup and active play: cached static backdrop, viewport render culling, reduced per-frame allocations, and squared-distance hot paths.
+- Vitest gameplay/system tests and Playwright browser smoke test.
+
+## Controls
+
+| Action | Key |
+| --- | --- |
+| Start / Fire rockets | `Space` |
+| Turn left | `A` / `Left` |
+| Turn right | `D` / `Right` |
+| Boost | `W` / `Up` |
+| Charge Fang Dash | Hold `F` |
+| Pause / resume | `P` / `Esc` |
+| Restart | `R` |
+| Mute toggle | `M` |
+| Damage numbers toggle | `N` |
 
 ## Run locally
 
@@ -9,21 +60,13 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`.
+Open:
 
-## Controls
+```text
+http://localhost:5173
+```
 
-- `Space`: start / fire rockets
-- `A` / `Left`: turn left
-- `D` / `Right`: turn right
-- `W` / `Up`: boost
-- Hold `F`: fang dash charge
-- `P` / `Esc`: pause
-- `R`: restart
-- `M`: mute toggle
-- `N`: damage numbers toggle
-
-## Verification
+## Build and verify
 
 ```bash
 npm test
@@ -31,29 +74,22 @@ npm run build
 npm run test:e2e
 ```
 
-## Current milestone
+## Tech stack
 
-Playable v2 visual polish milestone:
+- Phaser 3
+- TypeScript
+- Vite
+- Vitest
+- Playwright
 
-- Vite + TypeScript + Phaser 3
-- 10 snake roster with Hermes as player
-- Arena shrink based on alive count plus continuous time pressure down to a tighter late-game arena
-- Upgraded neon/Olympus arena: star-map backdrop, layered grid, glowing arena rings, styled pickups, mines, rockets, and particle trails
-- Armored segmented snakes with glow, tapering bodies, scale plates, eyes, nose/head direction details, shields, dash aura, and fang lines
-- Floating damage indicators, impact particles, and screen shake when snakes take damage
-- Cooler separate leaderboard panel with rank markers, KO counts, HP bars, and cleaner compact HUD
-- Clearer start screen with less text and stronger start/action hierarchy
-- Readable pickup/hazard icons: HP heart, speed bolt, triple-shot bullets, shield icon, and mine warning marker
-- Shield fruit grants a temporary full damage block and is the only normal source of the blue head ring
-- Procedural browser SFX wired to semantic audio events. Toggle with `M`
-- Safer snake, fruit, upgrade, and mine spawning helpers
-- Fruit and upgrade pickups
-- Speed/triple/shield buffs
-- Rockets, boost, fang dash, collisions, death drops
-- Late-game mines with head/body triggering
-- AI snakes pursue fruit/upgrades/enemies, avoid mines/walls/body hazards, and use rockets/dash tactically
-- HUD, leaderboard, feed, menu, pause, end screen
-- Radar/minimap with snakes, pickups, and mines
-- Spectator messaging after Hermes is eliminated
-- Local settings and best score persistence
-- Vitest core/system/visual tests and Playwright smoke test
+## Project structure
+
+```text
+src/game/
+  config/       balance and world constants
+  core/         math, RNG, persistence, types
+  data/         snake roster
+  entities/     snake HP/radius/body helpers
+  systems/      arena, audio, radar, scoring, spawn, visuals
+  scenes/       Phaser scene orchestration and rendering
+```
