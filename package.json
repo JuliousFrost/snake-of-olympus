@@ -1,0 +1,24 @@
+{
+  "name": "snake-of-olympus",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.1",
+    "jsdom": "^29.1.1",
+    "typescript": "~6.0.2",
+    "vite": "^8.0.10",
+    "vitest": "^4.1.5"
+  },
+  "dependencies": {
+    "phaser": "^3.90.0"
+  }
+}
