@@ -76,7 +76,7 @@ export class MatchScene extends Phaser.Scene {
     this.graphics = this.add.graphics();
     this.menuBackground = this.add.image(this.scale.width / 2, this.scale.height / 2, 'start-screen').setOrigin(0.5).setScrollFactor(0).setDepth(1);
     this.hud = this.add.text(16, 12, '', { fontFamily: 'Georgia, Times New Roman, serif', fontSize: '15px', color: '#fff4d6', lineSpacing: 5, stroke: '#180b24', strokeThickness: 3 }).setScrollFactor(0).setDepth(20);
-    this.leaderboardText = this.add.text(0, 0, '', { fontFamily: 'Georgia, Times New Roman, serif', fontSize: '14px', color: '#fff8e8', lineSpacing: 7, stroke: '#180b24', strokeThickness: 2 }).setScrollFactor(0).setDepth(22);
+    this.leaderboardText = this.add.text(0, 0, '', { fontFamily: 'Courier New, ui-monospace, monospace', fontSize: '16px', color: '#fff8e8', lineSpacing: 7, stroke: '#180b24', strokeThickness: 2 }).setScrollFactor(0).setDepth(22);
     this.feedText = this.add.text(16, 0, '', { fontFamily: 'Georgia, Times New Roman, serif', fontSize: '13px', color: '#f3d48b', lineSpacing: 6, stroke: '#160812', strokeThickness: 2 }).setScrollFactor(0).setDepth(22);
     this.overlay = this.add.text(0, 0, '', { fontFamily: 'Georgia, Times New Roman, serif', fontSize: '28px', color: '#fff4d6', align: 'center', stroke: '#160812', strokeThickness: 8 }).setOrigin(0.5).setScrollFactor(0).setDepth(30);
     this.title = this.add.text(0, 0, '', { fontFamily: 'Georgia, Times New Roman, serif', fontSize: '42px', color: '#ffd166', align: 'center', stroke: '#160812', strokeThickness: 10 }).setOrigin(0.5).setScrollFactor(0).setDepth(31);
@@ -721,7 +721,25 @@ export class MatchScene extends Phaser.Scene {
       this.graphics.fillStyle(0x07101f, 0.96).fillCircle(noseX, noseY, Math.max(2, radius * 0.12));
       this.graphics.lineStyle(2, s.accent, 0.85).lineBetween(noseX, noseY, noseX + Math.cos(s.angle - 0.26) * 16, noseY + Math.sin(s.angle - 0.26) * 16);
       this.graphics.lineStyle(2, s.accent, 0.85).lineBetween(noseX, noseY, noseX + Math.cos(s.angle + 0.26) * 16, noseY + Math.sin(s.angle + 0.26) * 16);
+      if (s.isPlayer) this.drawDashChargeBar(s, radius);
     }
+  }
+
+  private drawDashChargeBar(s: SnakeRuntime, radius: number) {
+    if (s.chargeHeld <= 0 || s.dashTime > 0) return;
+    const progress = Phaser.Math.Clamp(s.chargeHeld / BALANCE.chargeHoldDuration, 0, 1);
+    const width = Math.max(104, radius * 4.4);
+    const height = 14;
+    const x = s.x - width / 2;
+    const y = s.y - radius - 46;
+    const glow = 0.35 + progress * 0.55;
+
+    this.graphics.fillStyle(0xffd166, glow * 0.36).fillRoundedRect(x - 10, y - 10, width + 20, height + 20, 11);
+    this.graphics.fillStyle(0x180b24, 0.92).fillRoundedRect(x, y, width, height, 7);
+    this.graphics.fillStyle(0x3c2235, 0.96).fillRoundedRect(x + 2, y + 2, width - 4, height - 4, 5);
+    this.graphics.fillGradientStyle(0xfff4d6, 0xffd166, 0xffb12c, 0xd88a16, 1).fillRoundedRect(x + 2, y + 2, Math.max(32, (width - 4) * progress), height - 4, 5);
+    this.graphics.lineStyle(3, 0xfff4d6, 0.82).strokeRoundedRect(x, y, width, height, 7);
+    this.graphics.lineStyle(2, 0xffd166, 0.96).lineBetween(x + width * progress, y - 5, x + width * progress, y + height + 5);
   }
 
   private drawDamageIndicators() {
@@ -793,34 +811,42 @@ export class MatchScene extends Phaser.Scene {
     const spectator = player.alive ? '' : ` · SPECTATING ${leader?.name ?? 'arena'}`;
     const arenaPct = Math.round(this.arenaScale * 100);
     const buffs = Object.entries(player.buffs).map(([k, v]) => `${k.toUpperCase()} ${Math.ceil(v ?? 0)}s`).join('   ') || 'NO BUFF';
+    const camera = this.cameras.main;
+    const zoom = camera.zoom || 1;
+    const hx = camera.scrollX + 8 / zoom;
+    const hy = camera.scrollY + 8 / zoom;
+    const hw = Math.min(900, Math.max(640, this.scale.width - 470)) / zoom;
+    this.graphics.fillGradientStyle(0x8f6720, 0x5a3217, 0x2a1826, 0x3a2117, 0.68).fillRoundedRect(hx, hy, hw, 70 / zoom, 16 / zoom);
+    this.graphics.lineStyle(3 / zoom, 0xffd166, 0.76).strokeRoundedRect(hx, hy, hw, 70 / zoom, 16 / zoom);
+    this.graphics.lineStyle(1 / zoom, 0xfff4d6, 0.36).strokeRoundedRect(hx + 7 / zoom, hy + 7 / zoom, hw - 14 / zoom, 56 / zoom, 12 / zoom);
+    this.graphics.fillStyle(0xffd166, 0.2).fillRoundedRect(hx + 12 / zoom, hy + 12 / zoom, hw - 24 / zoom, 20 / zoom, 9 / zoom);
+
     this.hud.setText(`HP ${Math.round(player.hp)}   K ${player.kills}   SCORE ${player.score}   ALIVE ${alive}/10   ARENA ${arenaPct}%${spectator}\nROCKET ${player.cooldowns.rocket <= 0 ? 'READY' : player.cooldowns.rocket.toFixed(1) + 's'}   FANG ${player.cooldowns.charge <= 0 ? 'READY' : player.cooldowns.charge.toFixed(1) + 's'}   ${buffs}`);
 
     const top = sortLeaderboard(this.snakes).slice(0, 5);
     const icons = ['♛', 'Ⅱ', 'Ⅲ', 'Ⅳ', 'Ⅴ'];
     this.leaderboardText
-      .setPosition(this.scale.width - 308, 190)
-      .setText(top.map((s, i) => `${icons[i]} ${s.name.padEnd(10).slice(0, 10)}  ${s.alive ? '●' : '×'}  K${s.kills}  ${Math.max(0, Math.round(s.hp)).toString().padStart(2, '0')}`).join('\n'));
+      .setPosition(this.scale.width - 332, 190)
+      .setText(top.map((s, i) => `${icons[i]} ${s.name.padEnd(10).slice(0, 10)} ${s.alive ? '●' : '×'}  KO ${s.kills.toString().padStart(2, ' ')}  HP ${Math.max(0, Math.round(s.hp)).toString().padStart(2, '0')}`).join('\n'));
     this.feedText
       .setPosition(16, this.scale.height - 98)
       .setText(this.feed.slice(-BALANCE.feedRowsShown).map((f) => `› ${f.text}`).join('\n'));
 
-    const camera = this.cameras.main;
-    const zoom = camera.zoom || 1;
-    const lx = camera.scrollX + (this.scale.width - 328) / zoom;
+    const lx = camera.scrollX + (this.scale.width - 356) / zoom;
     const ly = camera.scrollY + 154 / zoom;
-    this.graphics.fillStyle(0x221327, 0.82).fillRoundedRect(lx, ly, 308 / zoom, 174 / zoom, 16 / zoom);
-    this.graphics.lineStyle(3 / zoom, 0xffd166, 0.78).strokeRoundedRect(lx, ly, 308 / zoom, 174 / zoom, 16 / zoom);
-    this.graphics.lineStyle(1 / zoom, 0xfff4d6, 0.28).strokeRoundedRect(lx + 7 / zoom, ly + 7 / zoom, 294 / zoom, 160 / zoom, 12 / zoom);
-    this.graphics.fillStyle(0xffd166, 0.16).fillRoundedRect(lx + 10 / zoom, ly + 10 / zoom, 288 / zoom, 30 / zoom, 10 / zoom);
-    this.graphics.lineStyle(1 / zoom, 0xfff4d6, 0.38).lineBetween(lx + 16 / zoom, ly + 50 / zoom, lx + 292 / zoom, ly + 50 / zoom);
+    this.graphics.fillStyle(0x221327, 0.82).fillRoundedRect(lx, ly, 338 / zoom, 190 / zoom, 16 / zoom);
+    this.graphics.lineStyle(3 / zoom, 0xffd166, 0.78).strokeRoundedRect(lx, ly, 338 / zoom, 190 / zoom, 16 / zoom);
+    this.graphics.lineStyle(1 / zoom, 0xfff4d6, 0.28).strokeRoundedRect(lx + 7 / zoom, ly + 7 / zoom, 324 / zoom, 176 / zoom, 12 / zoom);
+    this.graphics.fillStyle(0xffd166, 0.16).fillRoundedRect(lx + 10 / zoom, ly + 10 / zoom, 318 / zoom, 30 / zoom, 10 / zoom);
+    this.graphics.lineStyle(1 / zoom, 0xfff4d6, 0.38).lineBetween(lx + 16 / zoom, ly + 50 / zoom, lx + 322 / zoom, ly + 50 / zoom);
     this.graphics.fillStyle(0xffd166, 0.92).fillCircle(lx + 28 / zoom, ly + 25 / zoom, 7 / zoom);
     this.graphics.lineStyle(2 / zoom, 0xffd166, 0.9).lineBetween(lx + 42 / zoom, ly + 25 / zoom, lx + 132 / zoom, ly + 25 / zoom);
 
     top.forEach((s, i) => {
-      const y = ly + (58 + i * 22) / zoom;
-      const barWidth = Math.max(3, Math.min(88, (Math.max(0, s.hp) / BALANCE.maxHp) * 88));
-      this.graphics.fillStyle(0x10203a, 0.9).fillRoundedRect(lx + 194 / zoom, y + 3 / zoom, 88 / zoom, 7 / zoom, 4 / zoom);
-      this.graphics.fillStyle(s.alive ? s.color : 0x5d6677, 0.9).fillRoundedRect(lx + 194 / zoom, y + 3 / zoom, barWidth / zoom, 7 / zoom, 4 / zoom);
+      const y = ly + (62 + i * 25) / zoom;
+      const barWidth = Math.max(3, Math.min(74, (Math.max(0, s.hp) / BALANCE.maxHp) * 74));
+      this.graphics.fillStyle(0x10203a, 0.9).fillRoundedRect(lx + 248 / zoom, y + 4 / zoom, 74 / zoom, 7 / zoom, 4 / zoom);
+      this.graphics.fillStyle(s.alive ? s.color : 0x5d6677, 0.9).fillRoundedRect(lx + 248 / zoom, y + 4 / zoom, barWidth / zoom, 7 / zoom, 4 / zoom);
     });
 
     const fx = camera.scrollX + 8 / zoom;
