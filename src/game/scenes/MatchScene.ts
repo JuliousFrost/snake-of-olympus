@@ -8,6 +8,9 @@ import { getArenaBounds, getArenaScale, clampToArena } from '../systems/arenaSys
 import { applyDamage, applyHealing, getHeadRadius, getSegmentCount } from '../entities/snakeMath';
 import { scoreSnake, sortLeaderboard } from '../systems/scoringSystem';
 import { safeJsonRead, safeJsonWrite, getSafeStorage } from '../core/persistence';
+import { chooseSpawnPoint, maintainPickupTargets } from '../systems/spawnSystem';
+import { calculateRadarBlips } from '../systems/radarSystem';
+import { createAudioEventQueue, type AudioEventName } from '../systems/audioSystem';
 
 type Rocket = { x: number; y: number; vx: number; vy: number; life: number; ownerId: string; color: number };
 type Pickup = { id: number; x: number; y: number; kind: PickupKind; buff?: BuffKind; value: number };
@@ -35,6 +38,7 @@ export class MatchScene extends Phaser.Scene {
   private nextMine = 1.2;
   private pickupId = 1;
   private settings: Settings = DEFAULT_SETTINGS;
+  private audioEvents = createAudioEventQueue(DEFAULT_SETTINGS);
   private bestScore = 0;
 
   constructor() {
@@ -44,6 +48,7 @@ export class MatchScene extends Phaser.Scene {
   create() {
     const storage = getSafeStorage(window);
     this.settings = safeJsonRead(storage, 'soo:settings', DEFAULT_SETTINGS);
+    this.audioEvents = createAudioEventQueue(this.settings);
     this.bestScore = safeJsonRead(storage, 'soo:bestScore', 0);
     this.cameras.main.setBackgroundColor('#07101f');
     this.cameras.main.setBounds(0, 0, WORLD.width, WORLD.height);
@@ -72,19 +77,26 @@ export class MatchScene extends Phaser.Scene {
     this.mines = [];
     this.feed = [{ text: 'The gates of Olympus open.', life: BALANCE.feedLife }];
     this.nextMine = 1.2;
+    const startBounds = getArenaBounds(1);
+    const placed: SnakeRuntime[] = [];
     this.snakes = SNAKE_ROSTER.map((roster, i) => {
-      const angle = (Math.PI * 2 * i) / SNAKE_ROSTER.length;
-      const radius = i === 0 ? 0 : 420 + (i % 3) * 120;
+      const point = chooseSpawnPoint(startBounds, placed, [], {
+        fallbackIndex: i,
+        random: () => this.rng.next(),
+      });
+      const angle = angleTo(point.x, point.y, WORLD.width / 2, WORLD.height / 2);
       const hp = roster.isPlayer ? BALANCE.startHp : this.rng.int(BALANCE.minAiHp, BALANCE.maxAiHp);
-      const x = WORLD.width / 2 + Math.cos(angle) * radius;
-      const y = WORLD.height / 2 + Math.sin(angle) * radius;
-      return {
+      const x = point.x;
+      const y = point.y;
+      const snake = {
         ...roster,
-        x, y, angle: angle + Math.PI / 2, hp, alive: true, kills: 0, fruits: 0, survival: 0, score: 0,
+        x, y, angle, hp, alive: true, kills: 0, fruits: 0, survival: 0, score: 0,
         body: Array.from({ length: getSegmentCount(hp) }, (_, j) => ({ x: x - Math.cos(angle) * j * BALANCE.segmentSpacing, y: y - Math.sin(angle) * j * BALANCE.segmentSpacing })),
         buffs: {}, cooldowns: { rocket: 0, charge: 0, boostDrain: 0, wall: 0, head: 0, body: 0, chargeHit: 0 },
         chargeHeld: 0, dashTime: 0, aiThink: this.rng.between(BALANCE.aiThinkIntervalMin, BALANCE.aiThinkIntervalMax), targetAngle: angle,
       } satisfies SnakeRuntime;
+      placed.push(snake);
+      return snake;
     });
     this.maintainPickups();
     this.overlay.setText('');
@@ -119,6 +131,7 @@ export class MatchScene extends Phaser.Scene {
     });
     this.followCamera();
     this.checkEndState();
+    this.flushAudioHooks();
   }
 
   private updateSnakes(dt: number) {
@@ -170,6 +183,7 @@ export class MatchScene extends Phaser.Scene {
         s.dashTime = BALANCE.chargeDashDuration;
         s.cooldowns.charge = BALANCE.chargeCooldown;
         s.chargeHeld = 0;
+        this.emitAudio('dash-launch');
         this.feedLine('Hermes launches Fang Dash!');
       }
     } else if (s.chargeHeld > 0) s.chargeHeld = Math.max(0, s.chargeHeld - dt * 2);
@@ -195,7 +209,7 @@ export class MatchScene extends Phaser.Scene {
         const delta = Math.abs(wrapAngle(angleTo(s.x, s.y, enemy.x, enemy.y) - s.angle));
         if (d < BALANCE.aiFireRange && delta < BALANCE.aiFireAngleGate && s.cooldowns.rocket <= 0) this.fireRocket(s);
         if (d < BALANCE.aiChargeRange && delta < BALANCE.aiChargeAngleGate && s.cooldowns.charge <= 0 && s.hp > BALANCE.minChargeHp) {
-          s.dashTime = BALANCE.chargeDashDuration; s.cooldowns.charge = BALANCE.chargeCooldown;
+          s.dashTime = BALANCE.chargeDashDuration; s.cooldowns.charge = BALANCE.chargeCooldown; this.emitAudio('dash-launch', 0.45);
         }
       }
     }
@@ -211,6 +225,7 @@ export class MatchScene extends Phaser.Scene {
       this.rockets.push({ x: owner.x + Math.cos(angle) * 24, y: owner.y + Math.sin(angle) * 24, vx: Math.cos(angle) * BALANCE.rocketSpeed, vy: Math.sin(angle) * BALANCE.rocketSpeed, life: BALANCE.rocketLife, ownerId: owner.id, color: owner.accent });
     }
     owner.cooldowns.rocket = BALANCE.rocketCooldown;
+    this.emitAudio('rocket-fire', owner.isPlayer ? 1 : 0.45);
   }
 
   private updateRockets(dt: number) {
@@ -225,6 +240,7 @@ export class MatchScene extends Phaser.Scene {
           s.hp = applyHealing(s.hp, p.value); s.fruits += 1;
           if (p.buff) s.buffs[p.buff] = p.buff === 'speed' ? BALANCE.speedFruitDuration : p.buff === 'triple' ? BALANCE.tripleFruitDuration : BALANCE.shieldFruitDuration;
           this.pickups = this.pickups.filter((x) => x.id !== p.id);
+          this.emitAudio(p.kind === 'upgrade' ? 'upgrade-pickup' : 'fruit-pickup', s.isPlayer ? 1 : 0.4);
           this.feedLine(`${s.name} claimed ${p.buff ?? 'fruit'}`);
         }
       }
@@ -238,7 +254,13 @@ export class MatchScene extends Phaser.Scene {
       this.nextMine -= dt;
       if (this.nextMine <= 0 && this.mines.length < BALANCE.landmineMax) {
         const b = getArenaBounds(this.arenaScale);
-        this.mines.push({ x: this.rng.between(b.left + BALANCE.landmineSpawnPadding, b.right - BALANCE.landmineSpawnPadding), y: this.rng.between(b.top + BALANCE.landmineSpawnPadding, b.bottom - BALANCE.landmineSpawnPadding), armed: 0, cooldown: 0 });
+        const point = chooseSpawnPoint(b, this.snakes, this.mines, {
+          minDistance: BALANCE.landmineSpawnPadding,
+          margin: BALANCE.landmineSpawnPadding,
+          random: () => this.rng.next(),
+          fallbackIndex: this.mines.length,
+        });
+        this.mines.push({ x: point.x, y: point.y, armed: 0, cooldown: 0 });
         this.nextMine = this.rng.between(BALANCE.landmineSpawnIntervalMin, BALANCE.landmineSpawnIntervalMax);
       }
     }
@@ -251,6 +273,7 @@ export class MatchScene extends Phaser.Scene {
       if (victim) {
         const bodyHit = distance(victim, mine) >= getHeadRadius(victim.hp) + BALANCE.landmineRadius;
         this.hurt(victim, bodyHit ? BALANCE.landmineBodyDamage : BALANCE.landmineDamage, undefined, 'mine');
+        this.emitAudio('mine-trigger');
         mine.cooldown = BALANCE.landmineTriggerCooldown;
         this.feedLine(`${victim.name} hit a mine!`);
       }
@@ -266,6 +289,7 @@ export class MatchScene extends Phaser.Scene {
         if (headHit || bodyHit) {
           const owner = this.snakes.find((x) => x.id === r.ownerId);
           this.hurt(s, BALANCE.rocketDamage * (headHit ? BALANCE.rocketHeadMultiplier : 1), owner, 'rocket');
+          this.emitAudio('rocket-impact', owner?.isPlayer ? 1 : 0.45);
           this.rockets = this.rockets.filter((x) => x !== r);
           break;
         }
@@ -289,25 +313,34 @@ export class MatchScene extends Phaser.Scene {
   private hurt(target: SnakeRuntime, amount: number, attacker?: SnakeRuntime, source = 'damage') {
     const result = applyDamage(target.hp, amount, Boolean(target.buffs.shield));
     target.hp = result.hp;
+    if (result.damage > 0) this.emitAudio('damage-hit', target.isPlayer ? 1 : 0.35);
     if (result.killed) {
       target.alive = false;
       this.feedLine(`${attacker?.name ?? source} defeated ${target.name}`);
       if (attacker && attacker.id !== target.id) attacker.kills += 1;
+      this.emitAudio('snake-death');
       for (let i = 0; i < 5; i++) this.spawnPickup(target.x + this.rng.between(-60, 60), target.y + this.rng.between(-60, 60), 'fruit');
     }
   }
 
   private maintainPickups() {
     const alive = this.snakes.filter((s) => s.alive).length;
-    const baseTarget = BALANCE.baseFruitTarget + Math.max(0, alive - 6);
-    const upgradeTarget = BALANCE.upgradeFruitTarget + Math.max(0, Math.floor((alive - 2) / 4));
-    while (this.pickups.filter((p) => p.kind === 'fruit').length < baseTarget) this.spawnRandomPickup('fruit');
-    while (this.pickups.filter((p) => p.kind === 'upgrade').length < upgradeTarget) this.spawnRandomPickup('upgrade');
+    const currentBase = this.pickups.filter((p) => p.kind === 'fruit').length;
+    const currentUpgrade = this.pickups.filter((p) => p.kind === 'upgrade').length;
+    const targets = maintainPickupTargets(alive, currentBase, currentUpgrade);
+    for (let i = 0; i < targets.baseNeeded; i++) this.spawnRandomPickup('fruit');
+    for (let i = 0; i < targets.upgradeNeeded; i++) this.spawnRandomPickup('upgrade');
   }
 
   private spawnRandomPickup(kind: PickupKind) {
     const b = getArenaBounds(this.arenaScale);
-    this.spawnPickup(this.rng.between(b.left + BALANCE.fruitSpawnMargin, b.right - BALANCE.fruitSpawnMargin), this.rng.between(b.top + BALANCE.fruitSpawnMargin, b.bottom - BALANCE.fruitSpawnMargin), kind);
+    const point = chooseSpawnPoint(b, this.snakes, this.mines, {
+      minDistance: kind === 'upgrade' ? 120 : 80,
+      margin: BALANCE.fruitSpawnMargin,
+      random: () => this.rng.next(),
+      fallbackIndex: this.pickups.length,
+    });
+    this.spawnPickup(point.x, point.y, kind);
   }
 
   private spawnPickup(x: number, y: number, kind: PickupKind) {
@@ -340,13 +373,16 @@ export class MatchScene extends Phaser.Scene {
       this.matchState = 'complete';
       const player = this.snakes.find((s) => s.isPlayer)!;
       if (player.score > this.bestScore) { this.bestScore = player.score; safeJsonWrite(getSafeStorage(window), 'soo:bestScore', this.bestScore); }
+      this.emitAudio('victory');
       this.drawOverlay(`${alive[0]?.name ?? 'No one'} wins!\nYour score: ${player.score} · Best: ${this.bestScore}\nPress R to restart`);
     }
   }
 
   private togglePause() { if (this.matchState === 'active') this.matchState = 'paused'; else if (this.matchState === 'paused') { this.overlay.setText(''); this.matchState = 'active'; } }
-  private toggleMute() { this.settings.masterVolume = this.settings.masterVolume > 0 ? 0 : 0.7; safeJsonWrite(getSafeStorage(window), 'soo:settings', this.settings); }
+  private toggleMute() { this.settings.masterVolume = this.settings.masterVolume > 0 ? 0 : 0.7; this.audioEvents = createAudioEventQueue(this.settings); safeJsonWrite(getSafeStorage(window), 'soo:settings', this.settings); }
   private toggleDamageNumbers() { this.settings.damageNumbers = !this.settings.damageNumbers; safeJsonWrite(getSafeStorage(window), 'soo:settings', this.settings); }
+  private emitAudio(name: AudioEventName, intensity = 1) { this.audioEvents.emit(name, intensity); }
+  private flushAudioHooks() { this.audioEvents.drain(); }
   private feedLine(text: string) { this.feed.push({ text, life: BALANCE.feedLife }); this.feed = this.feed.slice(-BALANCE.feedMaxStored); }
 
   private drawMenu() {
@@ -377,6 +413,7 @@ export class MatchScene extends Phaser.Scene {
       this.graphics.fillStyle(s.accent, 1).fillCircle(s.x + Math.cos(s.angle) * 8, s.y + Math.sin(s.angle) * 8, 4);
       this.graphics.lineStyle(2, s.buffs.shield ? 0x8be9fd : s.accent, 0.75).strokeCircle(s.x, s.y, getHeadRadius(s.hp) + (s.dashTime > 0 ? 12 : 5));
     }
+    this.drawRadar(b);
     this.drawHud();
   }
 
@@ -384,12 +421,32 @@ export class MatchScene extends Phaser.Scene {
     this.graphics.fillGradientStyle(0x07101f, 0x101832, 0x180b2d, 0x07101f, 1).fillRect(0, 0, WORLD.width, WORLD.height);
   }
 
+  private drawRadar(bounds: ReturnType<typeof getArenaBounds>) {
+    const camera = this.cameras.main;
+    const zoom = camera.zoom || 1;
+    const radar = {
+      x: camera.scrollX + (this.scale.width - 214) / zoom,
+      y: camera.scrollY + 18 / zoom,
+      width: 180 / zoom,
+      height: 110 / zoom,
+    };
+    this.graphics.fillStyle(0x06101f, 0.76).fillRoundedRect(radar.x - 10 / zoom, radar.y - 10 / zoom, radar.width + 20 / zoom, radar.height + 22 / zoom, 10 / zoom);
+    this.graphics.lineStyle(2 / zoom, 0x8be9fd, 0.8).strokeRect(radar.x, radar.y, radar.width, radar.height);
+    const blips = calculateRadarBlips({ snakes: this.snakes, pickups: this.pickups, mines: this.mines, bounds, radar });
+    for (const blip of blips) {
+      const radius = blip.kind === 'player' ? 4.2 / zoom : blip.kind === 'snake' ? 3.1 / zoom : 2.4 / zoom;
+      this.graphics.fillStyle(blip.color, blip.kind === 'pickup' ? 0.7 : 0.95).fillCircle(blip.x, blip.y, radius);
+    }
+  }
+
   private drawHud() {
     const player = this.snakes.find((s) => s.isPlayer)!;
     const alive = this.snakes.filter((s) => s.alive).length;
     const board = sortLeaderboard(this.snakes).slice(0, 5).map((s, i) => `${i + 1}. ${s.name.padEnd(10).slice(0, 10)} ${s.alive ? '♥' : '×'} K${s.kills} HP${Math.round(s.hp)}`).join('\n');
     const buffs = Object.entries(player.buffs).map(([k, v]) => `${k}:${(v ?? 0).toFixed(0)}s`).join(' ') || 'none';
-    this.hud.setText(`Snake of Olympus\nTime ${this.elapsed.toFixed(0)}s · Alive ${alive}/10 · Mines ${alive <= BALANCE.landmineActivationAliveCount ? 'ACTIVE' : 'dormant'}\nHP ${Math.round(player.hp)} · Kills ${player.kills} · Fruit ${player.fruits} · Score ${player.score}\nRocket ${player.cooldowns.rocket <= 0 ? 'READY' : player.cooldowns.rocket.toFixed(1)} · Fang ${player.cooldowns.charge <= 0 ? 'READY' : player.cooldowns.charge.toFixed(1)} · Buffs ${buffs}\n\nLeaderboard\n${board}\n\nFeed\n${this.feed.slice(-BALANCE.feedRowsShown).map((f) => '• ' + f.text).join('\n')}`);
+    const leader = sortLeaderboard(this.snakes)[0];
+    const spectator = player.alive ? '' : `\nSPECTATING ${leader?.name ?? 'arena'} · Hermes eliminated`;
+    this.hud.setText(`Snake of Olympus${spectator}\nTime ${this.elapsed.toFixed(0)}s · Alive ${alive}/10 · Mines ${alive <= BALANCE.landmineActivationAliveCount ? 'ACTIVE' : 'dormant'}\nHP ${Math.round(player.hp)} · Kills ${player.kills} · Fruit ${player.fruits} · Score ${player.score}\nRocket ${player.cooldowns.rocket <= 0 ? 'READY' : player.cooldowns.rocket.toFixed(1)} · Fang ${player.cooldowns.charge <= 0 ? 'READY' : player.cooldowns.charge.toFixed(1)} · Buffs ${buffs}\n\nLeaderboard\n${board}\n\nFeed\n${this.feed.slice(-BALANCE.feedRowsShown).map((f) => '• ' + f.text).join('\n')}`);
   }
 
   private drawOverlay(text: string) {

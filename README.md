@@ -33,15 +33,19 @@ npm run test:e2e
 
 ## Current milestone
 
-Playable v0 foundation:
+Playable v1-ish foundation:
 
 - Vite + TypeScript + Phaser 3
 - 10 snake roster with Hermes as player
 - Arena shrink based on alive count
+- Safer snake, fruit, and mine spawning helpers
 - Fruit and upgrade pickups
 - Speed/triple/shield buffs
 - Rockets, boost, fang dash, collisions, death drops
-- Late-game mines
+- Late-game mines with head/body triggering
 - HUD, leaderboard, feed, menu, pause, end screen
+- Radar/minimap with snakes, pickups, and mines
+- Spectator messaging after Hermes is eliminated
 - Local settings and best score persistence
-- Vitest core rule tests and Playwright smoke test
+- Semantic audio event hooks ready for real SFX assets
+- Vitest core/system rule tests and Playwright smoke test
