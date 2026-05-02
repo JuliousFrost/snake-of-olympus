@@ -811,23 +811,24 @@ export class MatchScene extends Phaser.Scene {
     const spectator = player.alive ? '' : ` · SPECTATING ${leader?.name ?? 'arena'}`;
     const arenaPct = Math.round(this.arenaScale * 100);
     const buffs = Object.entries(player.buffs).map(([k, v]) => `${k.toUpperCase()} ${Math.ceil(v ?? 0)}s`).join('   ') || 'NO BUFF';
+    const hudText = `HP ${Math.round(player.hp)}   K ${player.kills}   SCORE ${player.score}   ALIVE ${alive}/10   ARENA ${arenaPct}%${spectator}\nROCKET ${player.cooldowns.rocket <= 0 ? 'READY' : player.cooldowns.rocket.toFixed(1) + 's'}   FANG ${player.cooldowns.charge <= 0 ? 'READY' : player.cooldowns.charge.toFixed(1) + 's'}   ${buffs}`;
+    this.hud.setText(hudText);
+
     const camera = this.cameras.main;
     const zoom = camera.zoom || 1;
     const hx = camera.scrollX + 8 / zoom;
     const hy = camera.scrollY + 8 / zoom;
-    const hw = Math.min(900, Math.max(640, this.scale.width - 470)) / zoom;
+    const hw = Math.min(this.hud.width + 34, this.scale.width - 450) / zoom;
     this.graphics.fillGradientStyle(0x8f6720, 0x5a3217, 0x2a1826, 0x3a2117, 0.68).fillRoundedRect(hx, hy, hw, 70 / zoom, 16 / zoom);
     this.graphics.lineStyle(3 / zoom, 0xffd166, 0.76).strokeRoundedRect(hx, hy, hw, 70 / zoom, 16 / zoom);
     this.graphics.lineStyle(1 / zoom, 0xfff4d6, 0.36).strokeRoundedRect(hx + 7 / zoom, hy + 7 / zoom, hw - 14 / zoom, 56 / zoom, 12 / zoom);
     this.graphics.fillStyle(0xffd166, 0.2).fillRoundedRect(hx + 12 / zoom, hy + 12 / zoom, hw - 24 / zoom, 20 / zoom, 9 / zoom);
 
-    this.hud.setText(`HP ${Math.round(player.hp)}   K ${player.kills}   SCORE ${player.score}   ALIVE ${alive}/10   ARENA ${arenaPct}%${spectator}\nROCKET ${player.cooldowns.rocket <= 0 ? 'READY' : player.cooldowns.rocket.toFixed(1) + 's'}   FANG ${player.cooldowns.charge <= 0 ? 'READY' : player.cooldowns.charge.toFixed(1) + 's'}   ${buffs}`);
-
     const top = sortLeaderboard(this.snakes).slice(0, 5);
     const icons = ['♛', 'Ⅱ', 'Ⅲ', 'Ⅳ', 'Ⅴ'];
     this.leaderboardText
       .setPosition(this.scale.width - 332, 190)
-      .setText(top.map((s, i) => `${icons[i]} ${s.name.padEnd(10).slice(0, 10)} ${s.alive ? '●' : '×'}  KO ${s.kills.toString().padStart(2, ' ')}  HP ${Math.max(0, Math.round(s.hp)).toString().padStart(2, '0')}`).join('\n'));
+      .setText(top.map((s, i) => `${icons[i]} ${s.name.padEnd(10).slice(0, 10)} ${s.alive ? '●' : '×'}  KO ${s.kills.toString().padStart(2, ' ')}`).join('\n'));
     this.feedText
       .setPosition(16, this.scale.height - 98)
       .setText(this.feed.slice(-BALANCE.feedRowsShown).map((f) => `› ${f.text}`).join('\n'));
