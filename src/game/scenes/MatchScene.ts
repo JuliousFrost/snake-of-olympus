@@ -36,6 +36,7 @@ const DEFAULT_SETTINGS: Settings = { shake: true, damageNumbers: true, masterVol
 const MUSIC_BASE_GAIN = 0.8;
 const SFX_BASE_GAIN = 1;
 const SFX_ASSET_GAIN = 0.8;
+const SHOOT_SFX_GAIN = 0.7;
 
 export class MatchScene extends Phaser.Scene {
   private rng = new Rng(20260502);
@@ -106,7 +107,7 @@ export class MatchScene extends Phaser.Scene {
     this.hud = this.add.text(16, 12, '', { fontFamily: 'Georgia, Times New Roman, serif', fontSize: '15px', color: '#fff4d6', lineSpacing: 5, stroke: '#180b24', strokeThickness: 3 }).setScrollFactor(0).setDepth(20);
     this.leaderboardText = this.add.text(0, 0, '', { fontFamily: 'Courier New, ui-monospace, monospace', fontSize: '16px', color: '#fff8e8', lineSpacing: 7, stroke: '#180b24', strokeThickness: 2 }).setScrollFactor(0).setDepth(22);
     this.feedText = this.add.text(16, 0, '', { fontFamily: 'Georgia, Times New Roman, serif', fontSize: '13px', color: '#f3d48b', lineSpacing: 6, stroke: '#160812', strokeThickness: 2 }).setScrollFactor(0).setDepth(22);
-    this.overlay = this.add.text(0, 0, '', { fontFamily: 'Georgia, Times New Roman, serif', fontSize: '28px', color: '#fff4d6', align: 'center', stroke: '#160812', strokeThickness: 8 }).setOrigin(0.5).setScrollFactor(0).setDepth(30);
+    this.overlay = this.add.text(0, 0, '', { fontFamily: 'Georgia, Times New Roman, serif', fontSize: '28px', color: '#fff4d6', align: 'center', stroke: '#160812', strokeThickness: 8 }).setOrigin(0.5).setScrollFactor(0).setDepth(35);
     this.title = this.add.text(0, 0, '', { fontFamily: 'Georgia, Times New Roman, serif', fontSize: '42px', color: '#ffd166', align: 'center', stroke: '#160812', strokeThickness: 10 }).setOrigin(0.5).setScrollFactor(0).setDepth(31);
     this.pauseSliderGraphics = this.add.graphics().setScrollFactor(0).setDepth(32);
     this.pauseMusicText = this.add.text(0, 0, '', { fontFamily: 'Georgia, Times New Roman, serif', fontSize: '18px', color: '#fff4d6', stroke: '#160812', strokeThickness: 4 }).setScrollFactor(0).setDepth(33).setVisible(false);
@@ -688,7 +689,8 @@ export class MatchScene extends Phaser.Scene {
     const key = this.getAssetSfxKey(name);
     if (!key || volume <= 0) return false;
     if (!this.cache.audio.exists(key)) { this.queueAudioAssets(); return false; }
-    this.sound.play(key, { volume: Phaser.Math.Clamp(volume * SFX_ASSET_GAIN, 0, 1) });
+    const assetGain = name === 'rocket-fire' ? SHOOT_SFX_GAIN : 1;
+    this.sound.play(key, { volume: Phaser.Math.Clamp(volume * SFX_ASSET_GAIN * assetGain, 0, 1) });
     return true;
   }
 
