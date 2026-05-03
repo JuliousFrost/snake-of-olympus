@@ -61,6 +61,7 @@ export class MatchScene extends Phaser.Scene {
   private musicHitArea!: Phaser.GameObjects.Rectangle;
   private sfxHitArea!: Phaser.GameObjects.Rectangle;
   private backgroundMusic?: AdjustableSound;
+  private audioAssetsQueued = false;
   private activeSlider?: SliderKind;
   private menuBackground?: Phaser.GameObjects.Image;
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
@@ -87,11 +88,6 @@ export class MatchScene extends Phaser.Scene {
 
   preload() {
     this.load.image('start-screen', '/assets/start-screen.png');
-    this.load.audio('olympus-music', '/assets/audio/into-tartarus.mp3');
-    this.load.audio('sfx-retro-laser', '/assets/audio/sfx/retro-laser.mp3');
-    this.load.audio('sfx-damage', '/assets/audio/sfx/damage.mp3');
-    this.load.audio('sfx-apple', '/assets/audio/sfx/regular-apple.mp3');
-    this.load.audio('sfx-powerup', '/assets/audio/sfx/powerup.mp3');
   }
 
   create() {
@@ -130,6 +126,7 @@ export class MatchScene extends Phaser.Scene {
     this.scale.on(Phaser.Scale.Events.RESIZE, () => { this.menuDirty = true; });
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.cleanupSceneObjects());
     this.drawMenu();
+    this.queueAudioAssets();
   }
 
   private startMatch() {
@@ -628,9 +625,24 @@ export class MatchScene extends Phaser.Scene {
 
   private startBackgroundMusic() {
     const volume = this.getMusicVolume();
+    if (!this.cache.audio.exists('olympus-music')) { this.queueAudioAssets(); return; }
     if (!this.backgroundMusic) this.backgroundMusic = this.sound.add('olympus-music', { loop: true, volume }) as AdjustableSound;
     this.updateBackgroundMusicVolume();
     if (volume > 0 && !this.backgroundMusic.isPlaying) this.backgroundMusic.play({ loop: true, volume });
+  }
+
+  private queueAudioAssets() {
+    if (this.audioAssetsQueued) return;
+    this.audioAssetsQueued = true;
+    this.load.audio('olympus-music', '/assets/audio/into-tartarus.mp3');
+    this.load.audio('sfx-retro-laser', '/assets/audio/sfx/retro-laser.mp3');
+    this.load.audio('sfx-damage', '/assets/audio/sfx/damage.mp3');
+    this.load.audio('sfx-apple', '/assets/audio/sfx/regular-apple.mp3');
+    this.load.audio('sfx-powerup', '/assets/audio/sfx/powerup.mp3');
+    this.load.once(Phaser.Loader.Events.COMPLETE, () => {
+      if (this.matchState !== 'menu') this.startBackgroundMusic();
+    });
+    this.load.start();
   }
 
   private updateBackgroundMusicVolume() {
@@ -673,6 +685,7 @@ export class MatchScene extends Phaser.Scene {
   private playAssetSound(name: AudioEventName, volume: number) {
     const key = this.getAssetSfxKey(name);
     if (!key || volume <= 0) return false;
+    if (!this.cache.audio.exists(key)) { this.queueAudioAssets(); return false; }
     this.sound.play(key, { volume: Phaser.Math.Clamp(volume * SFX_ASSET_GAIN, 0, 1) });
     return true;
   }
