@@ -16,14 +16,6 @@ A fast, Olympus-themed browser snake arena game built with Phaser 3, TypeScript,
 
 ![Snake of Olympus combat](docs/screenshots/action-combat.png)
 
-### Fang Dash charge
-
-![Snake of Olympus fang dash charge](docs/screenshots/fang-dash-charge.png)
-
-### Pause and controls
-
-![Snake of Olympus pause screen](docs/screenshots/paused-controls.png)
-
 ## Features
 
 - 10-snake Olympus roster with Hermes as the player.
