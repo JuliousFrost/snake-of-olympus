@@ -1112,13 +1112,14 @@ ROCKET ${player.cooldowns.rocket <= 0 ? 'READY' : player.cooldowns.rocket.toFixe
 
     const camera = this.cameras.main;
     const zoom = camera.zoom || 1;
+    this.hud.setPosition(22, 25);
     const hx = camera.scrollX + 8 / zoom;
-    const hy = camera.scrollY + 8 / zoom;
-    const hw = Math.min(this.hud.width + 34, this.scale.width - 450) / zoom;
-    this.graphics.fillGradientStyle(0x8f6720, 0x5a3217, 0x2a1826, 0x3a2117, 0.68).fillRoundedRect(hx, hy, hw, 70 / zoom, 16 / zoom);
-    this.graphics.lineStyle(3 / zoom, 0xffd166, 0.76).strokeRoundedRect(hx, hy, hw, 70 / zoom, 16 / zoom);
-    this.graphics.lineStyle(1 / zoom, 0xfff4d6, 0.36).strokeRoundedRect(hx + 7 / zoom, hy + 7 / zoom, hw - 14 / zoom, 56 / zoom, 12 / zoom);
-    this.graphics.fillStyle(0xffd166, 0.2).fillRoundedRect(hx + 12 / zoom, hy + 12 / zoom, hw - 24 / zoom, 20 / zoom, 9 / zoom);
+    const hy = camera.scrollY + 12 / zoom;
+    const hw = Math.min(this.hud.width + 46, this.scale.width - 450) / zoom;
+    this.graphics.fillGradientStyle(0x8f6720, 0x5a3217, 0x2a1826, 0x3a2117, 0.68).fillRoundedRect(hx, hy, hw, 76 / zoom, 16 / zoom);
+    this.graphics.lineStyle(3 / zoom, 0xffd166, 0.76).strokeRoundedRect(hx, hy, hw, 76 / zoom, 16 / zoom);
+    this.graphics.lineStyle(1 / zoom, 0xfff4d6, 0.36).strokeRoundedRect(hx + 7 / zoom, hy + 7 / zoom, hw - 14 / zoom, 62 / zoom, 12 / zoom);
+    this.graphics.fillStyle(0xffd166, 0.16).fillRoundedRect(hx + 12 / zoom, hy + 13 / zoom, hw - 24 / zoom, 20 / zoom, 9 / zoom);
 
     const top = leaderboard.slice(0, 5);
     const icons = ['♛', 'Ⅱ', 'Ⅲ', 'Ⅳ', 'Ⅴ'];
@@ -1147,10 +1148,10 @@ ROCKET ${player.cooldowns.rocket <= 0 ? 'READY' : player.cooldowns.rocket.toFixe
     this.graphics.lineStyle(2 / zoom, 0xffd166, 0.9).lineBetween(lx + 42 / zoom, ly + 25 / zoom, lx + 132 / zoom, ly + 25 / zoom);
 
     top.forEach((s, i) => {
-      const y = ly + (62 + i * 25) / zoom;
+      const y = ly + (41 + i * 25) / zoom;
       const barWidth = Math.max(3, Math.min(74, (Math.max(0, s.hp) / BALANCE.maxHp) * 74));
-      this.graphics.fillStyle(0x10203a, 0.9).fillRoundedRect(lx + 248 / zoom, y + 4 / zoom, 74 / zoom, 7 / zoom, 4 / zoom);
-      this.graphics.fillStyle(s.alive ? s.color : 0x5d6677, 0.9).fillRoundedRect(lx + 248 / zoom, y + 4 / zoom, barWidth / zoom, 7 / zoom, 4 / zoom);
+      this.graphics.fillStyle(0x10203a, 0.9).fillRoundedRect(lx + 248 / zoom, y, 74 / zoom, 7 / zoom, 4 / zoom);
+      this.graphics.fillStyle(s.alive ? s.color : 0x5d6677, 0.9).fillRoundedRect(lx + 248 / zoom, y, barWidth / zoom, 7 / zoom, 4 / zoom);
     });
 
     const fx = camera.scrollX + 8 / zoom;
