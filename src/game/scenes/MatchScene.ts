@@ -24,12 +24,14 @@ type Rocket = { x: number; y: number; vx: number; vy: number; life: number; owne
 type Pickup = { id: number; x: number; y: number; kind: PickupKind; buff?: BuffKind; value: number };
 type Mine = { x: number; y: number; armed: number; cooldown: number };
 type Feed = { text: string; life: number };
-type Settings = { shake: boolean; damageNumbers: boolean; masterVolume: number; sfxVolume: number };
+type Settings = { shake: boolean; damageNumbers: boolean; masterVolume: number; musicVolume: number; sfxVolume: number };
 type Particle = { x: number; y: number; vx: number; vy: number; life: number; maxLife: number; color: number; size: number; alpha: number };
 type AudioEngine = { context: AudioContext; gain: GainNode };
+type SliderKind = 'music' | 'sfx';
+type AdjustableSound = Phaser.Sound.BaseSound & { setVolume(value: number): Phaser.Sound.BaseSound };
 type ViewBounds = { left: number; right: number; top: number; bottom: number };
 
-const DEFAULT_SETTINGS: Settings = { shake: true, damageNumbers: true, masterVolume: 0.7, sfxVolume: 0.8 };
+const DEFAULT_SETTINGS: Settings = { shake: true, damageNumbers: true, masterVolume: 0.7, musicVolume: 0.55, sfxVolume: 0.8 };
 
 export class MatchScene extends Phaser.Scene {
   private rng = new Rng(20260502);
@@ -49,6 +51,13 @@ export class MatchScene extends Phaser.Scene {
   private feedText!: Phaser.GameObjects.Text;
   private overlay!: Phaser.GameObjects.Text;
   private title!: Phaser.GameObjects.Text;
+  private pauseSliderGraphics!: Phaser.GameObjects.Graphics;
+  private pauseMusicText!: Phaser.GameObjects.Text;
+  private pauseSfxText!: Phaser.GameObjects.Text;
+  private musicHitArea!: Phaser.GameObjects.Rectangle;
+  private sfxHitArea!: Phaser.GameObjects.Rectangle;
+  private backgroundMusic?: AdjustableSound;
+  private activeSlider?: SliderKind;
   private menuBackground?: Phaser.GameObjects.Image;
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
   private matchState: 'menu' | 'active' | 'paused' | 'complete' = 'menu';
@@ -74,11 +83,12 @@ export class MatchScene extends Phaser.Scene {
 
   preload() {
     this.load.image('start-screen', '/assets/start-screen.png');
+    this.load.audio('olympus-music', '/assets/audio/into-tartarus.mp3');
   }
 
   create() {
     const storage = getSafeStorage(window);
-    this.settings = safeJsonRead(storage, 'soo:settings', DEFAULT_SETTINGS);
+    this.settings = this.normalizeSettings(safeJsonRead<Partial<Settings>>(storage, 'soo:settings', DEFAULT_SETTINGS));
     this.audioEvents = createAudioEventQueue(this.settings);
     this.bestScore = safeJsonRead(storage, 'soo:bestScore', 0);
     this.cameras.main.setBackgroundColor('#120b18');
@@ -93,6 +103,11 @@ export class MatchScene extends Phaser.Scene {
     this.feedText = this.add.text(16, 0, '', { fontFamily: 'Georgia, Times New Roman, serif', fontSize: '13px', color: '#f3d48b', lineSpacing: 6, stroke: '#160812', strokeThickness: 2 }).setScrollFactor(0).setDepth(22);
     this.overlay = this.add.text(0, 0, '', { fontFamily: 'Georgia, Times New Roman, serif', fontSize: '28px', color: '#fff4d6', align: 'center', stroke: '#160812', strokeThickness: 8 }).setOrigin(0.5).setScrollFactor(0).setDepth(30);
     this.title = this.add.text(0, 0, '', { fontFamily: 'Georgia, Times New Roman, serif', fontSize: '42px', color: '#ffd166', align: 'center', stroke: '#160812', strokeThickness: 10 }).setOrigin(0.5).setScrollFactor(0).setDepth(31);
+    this.pauseSliderGraphics = this.add.graphics().setScrollFactor(0).setDepth(32);
+    this.pauseMusicText = this.add.text(0, 0, '', { fontFamily: 'Georgia, Times New Roman, serif', fontSize: '18px', color: '#fff4d6', stroke: '#160812', strokeThickness: 4 }).setScrollFactor(0).setDepth(33).setVisible(false);
+    this.pauseSfxText = this.add.text(0, 0, '', { fontFamily: 'Georgia, Times New Roman, serif', fontSize: '18px', color: '#fff4d6', stroke: '#160812', strokeThickness: 4 }).setScrollFactor(0).setDepth(33).setVisible(false);
+    this.musicHitArea = this.createPauseSliderHitArea('music');
+    this.sfxHitArea = this.createPauseSliderHitArea('sfx');
     const keyboard = this.input.keyboard!;
     this.keys = keyboard.addKeys('A,D,W,F,SPACE,LEFT,RIGHT,UP,ESC,P,R,M,N') as Record<string, Phaser.Input.Keyboard.Key>;
     keyboard.on('keydown-SPACE', () => this.matchState === 'menu' && this.startMatch());
@@ -101,6 +116,8 @@ export class MatchScene extends Phaser.Scene {
     keyboard.on('keydown-ESC', () => this.togglePause());
     keyboard.on('keydown-M', () => this.toggleMute());
     keyboard.on('keydown-N', () => this.toggleDamageNumbers());
+    this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => { if (this.activeSlider) this.setVolumeFromPointer(this.activeSlider, pointer.x); });
+    this.input.on('pointerup', () => { this.activeSlider = undefined; });
     window.addEventListener('blur', () => { if (this.matchState === 'active') this.matchState = 'paused'; });
     this.scale.on(Phaser.Scale.Events.RESIZE, () => { this.menuDirty = true; });
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => this.cleanupSceneObjects());
@@ -144,6 +161,8 @@ export class MatchScene extends Phaser.Scene {
     this.lastHudText = '';
     this.lastLeaderboardText = '';
     this.lastFeedText = '';
+    this.startBackgroundMusic();
+    this.hidePauseSliders();
     this.overlay.setText('');
     this.title.setText('');
   }
@@ -152,11 +171,12 @@ export class MatchScene extends Phaser.Scene {
     const dt = Math.min(deltaMs / 1000, 0.05);
     this.updateHudSize();
     if (this.matchState === 'menu') {
+      this.hidePauseSliders();
       if (this.menuDirty || this.scale.width !== this.lastViewportWidth || this.scale.height !== this.lastViewportHeight) this.drawMenu();
       return;
     }
-    if (this.matchState === 'paused') { this.drawWorld(); this.drawOverlay('PAUSED\nP/Esc resume · R restart\nA/D turn · W boost · Space rockets · Hold F dash'); return; }
-    if (this.matchState === 'complete') { this.drawWorld(); return; }
+    if (this.matchState === 'paused') { this.drawWorld(); this.drawPauseOverlay(); return; }
+    if (this.matchState === 'complete') { this.hidePauseSliders(); this.drawWorld(); return; }
     this.elapsed += dt;
     this.step(dt);
     this.drawWorld();
@@ -550,9 +570,13 @@ export class MatchScene extends Phaser.Scene {
     }
   }
 
-  private togglePause() { if (this.matchState === 'active') this.matchState = 'paused'; else if (this.matchState === 'paused') { this.overlay.setText(''); this.matchState = 'active'; } this.emitAudio('menu-confirm', 0.7); }
-  private toggleMute() { this.settings.masterVolume = this.settings.masterVolume > 0 ? 0 : 0.7; this.audioEvents = createAudioEventQueue(this.settings); safeJsonWrite(getSafeStorage(window), 'soo:settings', this.settings); this.emitAudio('menu-confirm', 0.7); }
-  private toggleDamageNumbers() { this.settings.damageNumbers = !this.settings.damageNumbers; safeJsonWrite(getSafeStorage(window), 'soo:settings', this.settings); this.emitAudio('menu-confirm', 0.7); }
+  private togglePause() {
+    if (this.matchState === 'active') this.matchState = 'paused';
+    else if (this.matchState === 'paused') { this.overlay.setText(''); this.hidePauseSliders(); this.matchState = 'active'; }
+    this.emitAudio('menu-confirm', 0.7);
+  }
+  private toggleMute() { this.settings.masterVolume = this.settings.masterVolume > 0 ? 0 : 0.7; this.saveSettings(); this.emitAudio('menu-confirm', 0.7); }
+  private toggleDamageNumbers() { this.settings.damageNumbers = !this.settings.damageNumbers; this.saveSettings(); this.emitAudio('menu-confirm', 0.7); }
   private emitAudio(name: AudioEventName, intensity = 1) { this.audioEvents.emit(name, intensity); }
   private flushAudioHooks() {
     for (const event of this.audioEvents.drain()) this.playProceduralSound(event.name, event.volume);
@@ -571,6 +595,40 @@ export class MatchScene extends Phaser.Scene {
     }
     if (this.audioEngine.context.state === 'suspended') void this.audioEngine.context.resume();
     return this.audioEngine;
+  }
+
+  private normalizeSettings(settings: Partial<Settings>): Settings {
+    return {
+      ...DEFAULT_SETTINGS,
+      ...settings,
+      masterVolume: Phaser.Math.Clamp(settings.masterVolume ?? DEFAULT_SETTINGS.masterVolume, 0, 1),
+      musicVolume: Phaser.Math.Clamp(settings.musicVolume ?? DEFAULT_SETTINGS.musicVolume, 0, 1),
+      sfxVolume: Phaser.Math.Clamp(settings.sfxVolume ?? DEFAULT_SETTINGS.sfxVolume, 0, 1),
+    };
+  }
+
+  private saveSettings() {
+    this.settings = this.normalizeSettings(this.settings);
+    this.audioEvents = createAudioEventQueue(this.settings);
+    this.updateBackgroundMusicVolume();
+    safeJsonWrite(getSafeStorage(window), 'soo:settings', this.settings);
+  }
+
+  private getMusicVolume() {
+    return Phaser.Math.Clamp(this.settings.masterVolume * this.settings.musicVolume, 0, 1);
+  }
+
+  private startBackgroundMusic() {
+    const volume = this.getMusicVolume();
+    if (!this.backgroundMusic) this.backgroundMusic = this.sound.add('olympus-music', { loop: true, volume }) as AdjustableSound;
+    this.updateBackgroundMusicVolume();
+    if (volume > 0 && !this.backgroundMusic.isPlaying) this.backgroundMusic.play({ loop: true, volume });
+  }
+
+  private updateBackgroundMusicVolume() {
+    const volume = this.getMusicVolume();
+    this.backgroundMusic?.setVolume(volume);
+    if (volume > 0 && this.backgroundMusic && !this.backgroundMusic.isPlaying && this.matchState !== 'menu') this.backgroundMusic.play({ loop: true, volume });
   }
 
   private playProceduralSound(name: AudioEventName, volume: number) {
@@ -596,7 +654,7 @@ export class MatchScene extends Phaser.Scene {
     oscillator.frequency.setValueAtTime(sound.frequency, now);
     oscillator.frequency.exponentialRampToValueAtTime(Math.max(35, sound.frequency * (name === 'victory' ? 1.5 : 0.55)), now + sound.end);
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, volume * this.settings.masterVolume * this.settings.sfxVolume * 0.22), now + 0.018);
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, volume * 0.22), now + 0.018);
     gain.gain.exponentialRampToValueAtTime(0.0001, now + sound.end);
     oscillator.connect(gain).connect(engine.gain);
     oscillator.start(now);
@@ -605,12 +663,71 @@ export class MatchScene extends Phaser.Scene {
 
   private feedLine(text: string) { this.feed.push({ text, life: BALANCE.feedLife }); this.feed = this.feed.slice(-BALANCE.feedMaxStored); }
 
+  private createPauseSliderHitArea(kind: SliderKind) {
+    const hitArea = this.add.rectangle(0, 0, 270, 34, 0xffffff, 0.001).setOrigin(0, 0.5).setScrollFactor(0).setDepth(34).setVisible(false).setInteractive({ useHandCursor: true });
+    hitArea.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      this.activeSlider = kind;
+      this.setVolumeFromPointer(kind, pointer.x);
+    });
+    return hitArea;
+  }
+
+  private sliderLayout(kind: SliderKind) {
+    const centerX = this.scale.width / 2;
+    const y = this.scale.height / 2 + (kind === 'music' ? 76 : 126);
+    return { labelX: centerX - 185, trackX: centerX - 68, trackY: y, trackWidth: 250, y };
+  }
+
+  private setVolumeFromPointer(kind: SliderKind, pointerX: number) {
+    const layout = this.sliderLayout(kind);
+    const value = Phaser.Math.Clamp((pointerX - layout.trackX) / layout.trackWidth, 0, 1);
+    if (kind === 'music') this.settings.musicVolume = value;
+    else this.settings.sfxVolume = value;
+    this.saveSettings();
+  }
+
+  private drawPauseOverlay() {
+    this.drawOverlay('PAUSED\nP/Esc resume · R restart\nA/D turn · W boost · Space rockets · Hold F dash');
+    this.drawPauseSliders();
+  }
+
+  private drawPauseSliders() {
+    const rows: Array<{ kind: SliderKind; label: string; value: number; text: Phaser.GameObjects.Text; hitArea: Phaser.GameObjects.Rectangle }> = [
+      { kind: 'music', label: 'Music', value: this.settings.musicVolume, text: this.pauseMusicText, hitArea: this.musicHitArea },
+      { kind: 'sfx', label: 'SFX', value: this.settings.sfxVolume, text: this.pauseSfxText, hitArea: this.sfxHitArea },
+    ];
+    this.pauseSliderGraphics.clear();
+    this.pauseSliderGraphics.fillStyle(0x120b18, 0.82).fillRoundedRect(this.scale.width / 2 - 250, this.scale.height / 2 + 42, 500, 128, 18);
+    this.pauseSliderGraphics.lineStyle(2, 0xffd166, 0.78).strokeRoundedRect(this.scale.width / 2 - 250, this.scale.height / 2 + 42, 500, 128, 18);
+    for (const row of rows) {
+      const layout = this.sliderLayout(row.kind);
+      const pct = Math.round(row.value * 100);
+      row.text.setText(`${row.label} ${pct}%`).setPosition(layout.labelX, layout.y - 12).setVisible(true);
+      row.hitArea.setPosition(layout.trackX, layout.trackY).setVisible(true);
+      this.pauseSliderGraphics.fillStyle(0x3c2235, 0.96).fillRoundedRect(layout.trackX, layout.trackY - 7, layout.trackWidth, 14, 7);
+      this.pauseSliderGraphics.fillGradientStyle(0xfff4d6, 0xffd166, 0xffb12c, 0xd88a16, 1).fillRoundedRect(layout.trackX, layout.trackY - 7, Math.max(10, layout.trackWidth * row.value), 14, 7);
+      this.pauseSliderGraphics.lineStyle(2, 0xfff4d6, 0.76).strokeRoundedRect(layout.trackX, layout.trackY - 7, layout.trackWidth, 14, 7);
+      this.pauseSliderGraphics.fillStyle(0xfff4d6, 1).fillCircle(layout.trackX + layout.trackWidth * row.value, layout.trackY, 12);
+      this.pauseSliderGraphics.lineStyle(2, 0xffd166, 1).strokeCircle(layout.trackX + layout.trackWidth * row.value, layout.trackY, 12);
+    }
+  }
+
+  private hidePauseSliders() {
+    this.pauseSliderGraphics.clear();
+    this.pauseMusicText.setVisible(false);
+    this.pauseSfxText.setVisible(false);
+    this.musicHitArea.setVisible(false);
+    this.sfxHitArea.setVisible(false);
+    this.activeSlider = undefined;
+  }
+
   private drawMenu() {
     this.graphics.clear();
     this.clearFloatingText();
     this.fitMenuBackground();
     this.title.setText('');
     this.overlay.setText('');
+    this.hidePauseSliders();
     this.hud.setText('');
     this.leaderboardText.setText('');
     this.feedText.setText('');
@@ -911,6 +1028,9 @@ export class MatchScene extends Phaser.Scene {
   private cleanupSceneObjects() {
     this.floatingTextObjects.forEach((text) => text.destroy());
     this.floatingTextObjects = [];
+    this.backgroundMusic?.stop();
+    this.backgroundMusic?.destroy();
+    this.backgroundMusic = undefined;
     if (this.audioEngine?.context.state !== 'closed') void this.audioEngine?.context.close();
     this.audioEngine = undefined;
   }

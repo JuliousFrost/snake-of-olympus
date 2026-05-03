@@ -34,7 +34,7 @@ A fast, Olympus-themed browser snake arena game built with Phaser 3, TypeScript,
 - Fruit pickups plus speed, triple-shot, and shield buffs.
 - AI snakes that pursue fruit, upgrades, and enemies while avoiding walls, mines, and body hazards.
 - HUD, leaderboard with KO counts and HP bars, feed, radar/minimap, menu, pause screen, and end screen.
-- Procedural browser SFX with mute toggle.
+- Background music plus procedural browser SFX with pause-menu volume sliders.
 - Local settings and best score persistence.
 - Performance optimizations for startup and active play: cached static backdrop, viewport render culling, reduced per-frame allocations, and squared-distance hot paths.
 - Vitest gameplay/system tests and Playwright browser smoke test.
@@ -52,6 +52,12 @@ A fast, Olympus-themed browser snake arena game built with Phaser 3, TypeScript,
 | Restart | `R` |
 | Mute toggle | `M` |
 | Damage numbers toggle | `N` |
+
+Music and SFX volume sliders are available from the pause menu.
+
+## Credits
+
+- Music: `Hades II - Into Tartarus`, credited to Hades II.
 
 ## Run locally
 
