@@ -58,6 +58,7 @@ export class MatchScene extends Phaser.Scene {
   private pauseSliderGraphics!: Phaser.GameObjects.Graphics;
   private pauseMusicText!: Phaser.GameObjects.Text;
   private pauseSfxText!: Phaser.GameObjects.Text;
+  private pauseCreditText!: Phaser.GameObjects.Text;
   private musicHitArea!: Phaser.GameObjects.Rectangle;
   private sfxHitArea!: Phaser.GameObjects.Rectangle;
   private backgroundMusic?: AdjustableSound;
@@ -110,6 +111,7 @@ export class MatchScene extends Phaser.Scene {
     this.pauseSliderGraphics = this.add.graphics().setScrollFactor(0).setDepth(32);
     this.pauseMusicText = this.add.text(0, 0, '', { fontFamily: 'Georgia, Times New Roman, serif', fontSize: '18px', color: '#fff4d6', stroke: '#160812', strokeThickness: 4 }).setScrollFactor(0).setDepth(33).setVisible(false);
     this.pauseSfxText = this.add.text(0, 0, '', { fontFamily: 'Georgia, Times New Roman, serif', fontSize: '18px', color: '#fff4d6', stroke: '#160812', strokeThickness: 4 }).setScrollFactor(0).setDepth(33).setVisible(false);
+    this.pauseCreditText = this.add.text(0, 0, '', { fontFamily: 'Georgia, Times New Roman, serif', fontSize: '16px', color: '#f3d48b', align: 'center', stroke: '#160812', strokeThickness: 4 }).setOrigin(0.5).setScrollFactor(0).setDepth(33).setVisible(false);
     this.musicHitArea = this.createPauseSliderHitArea('music');
     this.sfxHitArea = this.createPauseSliderHitArea('sfx');
     const keyboard = this.input.keyboard!;
@@ -640,7 +642,7 @@ export class MatchScene extends Phaser.Scene {
     this.load.audio('sfx-apple', '/assets/audio/sfx/regular-apple.mp3');
     this.load.audio('sfx-powerup', '/assets/audio/sfx/powerup.mp3');
     this.load.once(Phaser.Loader.Events.COMPLETE, () => {
-      if (this.matchState !== 'menu') this.startBackgroundMusic();
+      this.startBackgroundMusic();
     });
     this.load.start();
   }
@@ -648,7 +650,7 @@ export class MatchScene extends Phaser.Scene {
   private updateBackgroundMusicVolume() {
     const volume = this.getMusicVolume();
     this.backgroundMusic?.setVolume(volume);
-    if (volume > 0 && this.backgroundMusic && !this.backgroundMusic.isPlaying && this.matchState !== 'menu') this.backgroundMusic.play({ loop: true, volume });
+    if (volume > 0 && this.backgroundMusic && !this.backgroundMusic.isPlaying) this.backgroundMusic.play({ loop: true, volume });
   }
 
   private playProceduralSound(name: AudioEventName, volume: number) {
@@ -714,8 +716,8 @@ export class MatchScene extends Phaser.Scene {
 
   private sliderLayout(kind: SliderKind) {
     const centerX = this.scale.width / 2;
-    const y = this.scale.height / 2 + (kind === 'music' ? 76 : 126);
-    return { labelX: centerX - 185, trackX: centerX - 68, trackY: y, trackWidth: 250, y };
+    const y = this.scale.height / 2 + (kind === 'music' ? 48 : 94);
+    return { labelX: centerX - 205, trackX: centerX - 62, trackY: y, trackWidth: 270, y };
   }
 
   private setVolumeFromPointer(kind: SliderKind, pointerX: number) {
@@ -727,7 +729,10 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private drawPauseOverlay() {
-    this.drawOverlay('PAUSED\nP/Esc resume · R restart\nA/D turn · W boost · Space rockets · Hold F dash');
+    this.overlay
+      .setPosition(this.scale.width / 2, this.scale.height / 2 - 86)
+      .setFontSize(24)
+      .setText('PAUSED\nP/Esc resume · R restart\n←/→ or A/D turn · ↑ or W boost\nSpace rockets · Hold F dash');
     this.drawPauseSliders();
   }
 
@@ -737,8 +742,19 @@ export class MatchScene extends Phaser.Scene {
       { kind: 'sfx', label: 'SFX', value: this.settings.sfxVolume, text: this.pauseSfxText, hitArea: this.sfxHitArea },
     ];
     this.pauseSliderGraphics.clear();
-    this.pauseSliderGraphics.fillStyle(0x120b18, 0.82).fillRoundedRect(this.scale.width / 2 - 250, this.scale.height / 2 + 42, 500, 128, 18);
-    this.pauseSliderGraphics.lineStyle(2, 0xffd166, 0.78).strokeRoundedRect(this.scale.width / 2 - 250, this.scale.height / 2 + 42, 500, 128, 18);
+    const boxX = this.scale.width / 2 - 330;
+    const boxY = this.scale.height / 2 - 162;
+    const boxWidth = 660;
+    const boxHeight = 324;
+    this.pauseSliderGraphics.fillStyle(0x120b18, 0.94).fillRoundedRect(boxX, boxY, boxWidth, boxHeight, 20);
+    this.pauseSliderGraphics.lineStyle(3, 0xffd166, 0.82).strokeRoundedRect(boxX, boxY, boxWidth, boxHeight, 20);
+    this.pauseSliderGraphics.lineStyle(1.5, 0xfff4d6, 0.24).strokeRoundedRect(boxX + 9, boxY + 9, boxWidth - 18, boxHeight - 18, 16);
+    this.pauseSliderGraphics.lineStyle(1, 0xffd166, 0.36).lineBetween(boxX + 48, this.scale.height / 2 - 8, boxX + boxWidth - 48, this.scale.height / 2 - 8);
+    this.pauseSliderGraphics.lineStyle(1, 0xffd166, 0.28).lineBetween(boxX + 48, this.scale.height / 2 + 126, boxX + boxWidth - 48, this.scale.height / 2 + 126);
+    this.pauseCreditText
+      .setText('Made by Hermes · Music credit: Hades II')
+      .setPosition(this.scale.width / 2, this.scale.height / 2 + 140)
+      .setVisible(true);
     for (const row of rows) {
       const layout = this.sliderLayout(row.kind);
       const pct = Math.round(row.value * 100);
@@ -756,6 +772,7 @@ export class MatchScene extends Phaser.Scene {
     this.pauseSliderGraphics.clear();
     this.pauseMusicText.setVisible(false);
     this.pauseSfxText.setVisible(false);
+    this.pauseCreditText.setVisible(false);
     this.musicHitArea.setVisible(false);
     this.sfxHitArea.setVisible(false);
     this.activeSlider = undefined;
@@ -1161,6 +1178,7 @@ ROCKET ${player.cooldowns.rocket <= 0 ? 'READY' : player.cooldowns.rocket.toFixe
   }
 
   private drawOverlay(text: string) {
+    this.pauseCreditText.setVisible(false);
     this.overlay.setPosition(this.scale.width / 2, this.scale.height / 2).setFontSize(28).setText(text);
   }
 
