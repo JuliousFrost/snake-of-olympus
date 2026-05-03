@@ -32,6 +32,8 @@ type AdjustableSound = Phaser.Sound.BaseSound & { setVolume(value: number): Phas
 type ViewBounds = { left: number; right: number; top: number; bottom: number };
 
 const DEFAULT_SETTINGS: Settings = { shake: true, damageNumbers: true, masterVolume: 0.7, musicVolume: 0.55, sfxVolume: 0.8 };
+const MUSIC_BASE_GAIN = 0.4;
+const SFX_BASE_GAIN = 2;
 
 export class MatchScene extends Phaser.Scene {
   private rng = new Rng(20260502);
@@ -615,7 +617,7 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private getMusicVolume() {
-    return Phaser.Math.Clamp(this.settings.masterVolume * this.settings.musicVolume, 0, 1);
+    return Phaser.Math.Clamp(this.settings.masterVolume * this.settings.musicVolume * MUSIC_BASE_GAIN, 0, 1);
   }
 
   private startBackgroundMusic() {
@@ -654,7 +656,7 @@ export class MatchScene extends Phaser.Scene {
     oscillator.frequency.setValueAtTime(sound.frequency, now);
     oscillator.frequency.exponentialRampToValueAtTime(Math.max(35, sound.frequency * (name === 'victory' ? 1.5 : 0.55)), now + sound.end);
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, volume * 0.22), now + 0.018);
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, volume * SFX_BASE_GAIN * 0.22), now + 0.018);
     gain.gain.exponentialRampToValueAtTime(0.0001, now + sound.end);
     oscillator.connect(gain).connect(engine.gain);
     oscillator.start(now);
