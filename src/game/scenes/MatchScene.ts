@@ -33,9 +33,9 @@ type ViewBounds = { left: number; right: number; top: number; bottom: number };
 type SfxAssetKey = 'sfx-retro-laser' | 'sfx-damage' | 'sfx-apple' | 'sfx-powerup';
 
 const DEFAULT_SETTINGS: Settings = { shake: true, damageNumbers: true, masterVolume: 0.7, musicVolume: 0.55, sfxVolume: 0.8 };
-const MUSIC_BASE_GAIN = 0.4;
-const SFX_BASE_GAIN = 2;
-const SFX_ASSET_GAIN = 1.6;
+const MUSIC_BASE_GAIN = 0.8;
+const SFX_BASE_GAIN = 1;
+const SFX_ASSET_GAIN = 0.8;
 
 export class MatchScene extends Phaser.Scene {
   private rng = new Rng(20260502);
