@@ -30,10 +30,12 @@ type AudioEngine = { context: AudioContext; gain: GainNode };
 type SliderKind = 'music' | 'sfx';
 type AdjustableSound = Phaser.Sound.BaseSound & { setVolume(value: number): Phaser.Sound.BaseSound };
 type ViewBounds = { left: number; right: number; top: number; bottom: number };
+type SfxAssetKey = 'sfx-retro-laser' | 'sfx-damage' | 'sfx-apple' | 'sfx-powerup';
 
 const DEFAULT_SETTINGS: Settings = { shake: true, damageNumbers: true, masterVolume: 0.7, musicVolume: 0.55, sfxVolume: 0.8 };
 const MUSIC_BASE_GAIN = 0.4;
 const SFX_BASE_GAIN = 2;
+const SFX_ASSET_GAIN = 1.6;
 
 export class MatchScene extends Phaser.Scene {
   private rng = new Rng(20260502);
@@ -86,6 +88,10 @@ export class MatchScene extends Phaser.Scene {
   preload() {
     this.load.image('start-screen', '/assets/start-screen.png');
     this.load.audio('olympus-music', '/assets/audio/into-tartarus.mp3');
+    this.load.audio('sfx-retro-laser', '/assets/audio/sfx/retro-laser.mp3');
+    this.load.audio('sfx-damage', '/assets/audio/sfx/damage.mp3');
+    this.load.audio('sfx-apple', '/assets/audio/sfx/regular-apple.mp3');
+    this.load.audio('sfx-powerup', '/assets/audio/sfx/powerup.mp3');
   }
 
   create() {
@@ -591,7 +597,7 @@ export class MatchScene extends Phaser.Scene {
       if (!AudioContextClass) return undefined;
       const context = new AudioContextClass();
       const gain = context.createGain();
-      gain.gain.value = 0.16;
+      gain.gain.value = 0.28;
       gain.connect(context.destination);
       this.audioEngine = { context, gain };
     }
@@ -634,6 +640,7 @@ export class MatchScene extends Phaser.Scene {
   }
 
   private playProceduralSound(name: AudioEventName, volume: number) {
+    if (this.playAssetSound(name, volume)) return;
     const engine = this.getAudioEngine();
     if (!engine || volume <= 0) return;
     const now = engine.context.currentTime;
@@ -661,6 +668,24 @@ export class MatchScene extends Phaser.Scene {
     oscillator.connect(gain).connect(engine.gain);
     oscillator.start(now);
     oscillator.stop(now + sound.end + 0.02);
+  }
+
+  private playAssetSound(name: AudioEventName, volume: number) {
+    const key = this.getAssetSfxKey(name);
+    if (!key || volume <= 0) return false;
+    this.sound.play(key, { volume: Phaser.Math.Clamp(volume * SFX_ASSET_GAIN, 0, 1) });
+    return true;
+  }
+
+  private getAssetSfxKey(name: AudioEventName): SfxAssetKey | undefined {
+    switch (name) {
+      case 'rocket-fire': return 'sfx-retro-laser';
+      case 'damage-hit':
+      case 'rocket-impact': return 'sfx-damage';
+      case 'fruit-pickup': return 'sfx-apple';
+      case 'upgrade-pickup': return 'sfx-powerup';
+      default: return undefined;
+    }
   }
 
   private feedLine(text: string) { this.feed.push({ text, life: BALANCE.feedLife }); this.feed = this.feed.slice(-BALANCE.feedMaxStored); }
